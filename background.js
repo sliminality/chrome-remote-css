@@ -54,6 +54,16 @@ const _attachDebugger = tab => co(function* () {
   log(`Attached debugger to tab ${target.tabId}`);
 });
 
+const _detachDebugger = () => {
+  if (!target) {
+    return new Error('_detachDebugger: no debugger to detach');
+  }
+  cp.debugger.detach(target);
+  log(`Detached from target ${target.tabId}`);
+  target = null;
+  root = null;
+};
+
 const getRootNode = () => co(function* () {
   /**
    * Can't use `sendDebugCommand` for this one because
@@ -126,16 +136,27 @@ const getNodeMatchedStyles = nodeId =>
     nodeId
   });
 
+const onDebuggerDetach = (source, reason) => {
+  target = null;
+  root = null;
+  log(`Detached from target ${source}: ${reason}`);
+};
+
 const log = data => console.log(data);
 
-const initDebugger = () => co(function* () {
-  try {
-    const tab = yield _getActiveTab();
-    yield _attachDebugger(tab);
-    yield getRootNode();
-  } catch (err) {
-    log(err);
+const toggleDebugger = () => co(function* () {
+  if (target) {
+    _detachDebugger();
+  } else {
+    try {
+      const tab = yield _getActiveTab();
+      yield _attachDebugger(tab);
+      yield getRootNode();
+    } catch (err) {
+      log(err);
+    }
   }
 });
 
-chrome.browserAction.onClicked.addListener(initDebugger);
+chrome.browserAction.onClicked.addListener(toggleDebugger);
+chrome.debugger.onDetach.addListener(onDebuggerDetach);
