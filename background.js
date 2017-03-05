@@ -34,20 +34,20 @@ socket.on('disconnect', () => {
 
 const cp = new ChromePromise();
 
-const getActiveTab = () => co(function* () {
+const _getActiveTab = () => co(function* () {
   const tabs = yield cp.tabs.query({
     active: true,
     currentWindow: true,
   });
 
   if (tabs.length === 0) {
-    return new Error('getActiveTab: no active tab found');
+    return new Error('_getActiveTab: no active tab found');
   }
 
   return tabs[0];
 });
 
-const attachDebugger = tab => co(function* () {
+const _attachDebugger = tab => co(function* () {
   target = { tabId: tab.id };
   const protocol = '1.2';
   yield cp.debugger.attach(target, protocol);
@@ -128,12 +128,14 @@ const getNodeMatchedStyles = nodeId =>
 
 const log = data => console.log(data);
 
-function main() {
-  getActiveTab()
-    .then(attachDebugger)
-    .then(getRootNode)
-    .then(log)
-    .catch(log);
-}
+const initDebugger = () => co(function* () {
+  try {
+    const tab = yield _getActiveTab();
+    yield _attachDebugger(tab);
+    yield getRootNode();
+  } catch (err) {
+    log(err);
+  }
+});
 
-chrome.browserAction.onClicked.addListener(main);
+chrome.browserAction.onClicked.addListener(initDebugger);
