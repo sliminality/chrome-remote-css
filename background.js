@@ -1,36 +1,9 @@
-const port = 8090;
-let connected = false;
-let target = null;
-let root = null;
-let selector = 'body > main > section:nth-child(3) > div:nth-child(2) > figure';
-
-/**
- * Socket connection
- */
-
-const socket = io.connect(`http://localhost:${port}`);
-
-socket.on('connect', () => {
-  log('connected to socket');
-  connected = true;
-});
-
-socket.on('requestNode', ({ selector }) => {
-  log(`node requested: ${selector}`);
-});
-
-socket.on('chromeGetNode', ({ selector }) => {
-  log(`chrome node requested`);
-});
-
-socket.on('disconnect', () => {
-  connected = false;
-  log('disconnected from socket server');
-});
-
 /**
  * Chrome debugger functions
  */
+let target = null;
+let root = null;
+let selector = 'body > main > section:nth-child(3) > div:nth-child(2) > figure';
 
 const cp = new ChromePromise();
 
@@ -66,7 +39,7 @@ const _detachDebugger = () => {
 
 const getRootNode = () => co(function* () {
   /**
-   * Can't use `sendDebugCommand` for this one because
+   * Can't use `_sendDebugCommand` for this one because
    * it would cause a mutually recursive infinite loop.
    */
   if (!target) {
@@ -82,7 +55,7 @@ const getRootNode = () => co(function* () {
   return root;
 });
 
-const sendDebugCommand = (method, params) => co(function* () {
+const _sendDebugCommand = (method, params) => co(function* () {
   if (!target) {
     return new Error(method, ': no target defined');
   }
@@ -99,7 +72,7 @@ const sendDebugCommand = (method, params) => co(function* () {
 });
 
 const _getNodeId = selector => co(function* () {
-  const res = yield sendDebugCommand('DOM.querySelector', {
+  const res = yield _sendDebugCommand('DOM.querySelector', {
     nodeId: root.nodeId,
     selector,
   });
@@ -132,7 +105,7 @@ const getNode = selector => co(function* () {
 });
 
 const getNodeMatchedStyles = nodeId =>
-  sendDebugCommand('CSS.getMatchedStylesForNode', {
+  _sendDebugCommand('CSS.getMatchedStylesForNode', {
     nodeId
   });
 
@@ -160,3 +133,47 @@ const toggleDebugger = () => co(function* () {
 
 chrome.browserAction.onClicked.addListener(toggleDebugger);
 chrome.debugger.onDetach.addListener(onDebuggerDetach);
+
+/**
+ * Socket connection
+ */
+const port = 8090;
+let connected = false;
+
+const socket = io.connect(`http://localhost:${port}`);
+
+socket.on('connect', () => {
+  connected = true;
+  log(`Connected to socket: ${socket.id}`);
+});
+
+socket.on('disconnect', () => {
+  connected = false;
+  log('Disconnected from socket');
+});
+
+socket.on('data.request.DOM', ({ id, selector }) => {
+  log(`Node requested: ${selector}`);
+  getNode(selector)
+    .then(node => socket.emit('data.response.DOM', {
+      id,
+      node,
+    }))
+    .catch(err => socket.emit('data.response.error', {
+      id,
+      message: err,
+    }));
+});
+
+socket.on('data.request.styles', ({ id, nodeId }) => {
+  log(`Styles requested for node: ${nodeId}`);
+  getNodeMatchedStyles(nodeId)
+    .then(styles => socket.emit('data.response.styles', {
+      id,
+      styles,
+    }))
+    .catch(err => socket.emit('data.response.styles', {
+      id,
+      message: err,
+    }));
+});
