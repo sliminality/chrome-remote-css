@@ -31,7 +31,9 @@ const _detachDebugger = () => {
   if (!target) {
     throw new Error('_detachDebugger: no debugger to detach');
   }
-  cp.debugger.detach(target);
+  chrome.debugger.detach(target);
+
+  // If we detach ourselves, `onDebuggerDetach` won't get called.
   log(`Detached from target ${target.tabId}`);
   target = null;
   root = null;
@@ -131,38 +133,14 @@ const toggleDebugger = () => co(function* () {
   }
 });
 
-chrome.browserAction.onClicked.addListener(toggleDebugger);
-chrome.debugger.onDetach.addListener(onDebuggerDetach);
-
 /**
  * Socket connection
  */
 const port = 8090;
-let connected = false;
-
-const socket = io.connect(`http://localhost:${port}`);
-
-const onServerRequest = ({ id, fn, what, who }) => co(function* () {
-  console.group(id);
-  log('Server requested', what, 'for', who);
-  let result;
-  try {
-    result = yield fn(who);
-    socket.emit(`ext.response.${what}`, {
-      id,
-      [what]: result,
-    });
-    log('Returned', what, 'for', who);
-  } catch (err) {
-    log(err);
-    socket.emit('ext.response.error', {
-      id,
-      name: err.name,
-      message: err.message,
-    });
-  }
-  console.groupEnd();
+const socket = io(`http://localhost:${port}`, {
+  autoConnect: false,
 });
+let connected = false;
 
 socket.on('connect', () => {
   connected = true;
@@ -189,3 +167,44 @@ socket.on('server.request.styles', ({ id, nodeId }) =>
     what: 'styles',
     who: nodeId,
   }));
+
+const onServerRequest = ({ id, fn, what, who }) => co(function* () {
+  console.group(id);
+  log('Server requested', what, 'for', who);
+  let result;
+  try {
+    result = yield fn(who);
+    socket.emit(`ext.response.${what}`, {
+      id,
+      [what]: result,
+    });
+    log('Returned', what, 'for', who);
+  } catch (err) {
+    log(err);
+    socket.emit('ext.response.error', {
+      id,
+      name: err.name,
+      message: err.message,
+    });
+  }
+  console.groupEnd();
+});
+
+const toggleSocket = () => {
+  if (!connected) {
+    socket.connect();
+  } else {
+    socket.disconnect();
+  }
+};
+
+/**
+ * Initialize stuff
+ */
+const start = () => {
+  toggleDebugger();
+  toggleSocket();
+};
+
+chrome.browserAction.onClicked.addListener(start);
+chrome.debugger.onDetach.addListener(onDebuggerDetach);
