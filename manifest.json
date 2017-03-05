@@ -1,0 +1,20 @@
+{
+  "manifest_version": 2,
+  "name": "chrome-remote-css",
+  "description": "expose Chrome CSSOM",
+  "version": "0.01",
+  "browser_action": {
+    "default_icon": "icon.png"
+  },
+  "background": {
+    // "scripts": ["background.js"],
+    "page": "background.html"
+  },
+  "content_security_policy": "script-src 'self' https://wzrd.in https://cdn-orig.socket.io http://localhost:3001 https://unpkg.com; object-src 'self'",
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "debugger",
+    "clipboardWrite"
+  ]
+}
