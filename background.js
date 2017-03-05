@@ -90,7 +90,6 @@ let connected = false;
 let target = null;
 let root = null;
 let selector = 'body > main > section:nth-child(3) > div:nth-child(2) > figure';
-let el = null;
 
 /**
  * Socket connection
@@ -127,14 +126,15 @@ const getActiveTab = () => co(function* () {
     active: true,
     currentWindow: true,
   });
+
   if (tabs.length === 0) {
     return new Error('getActiveTab: no active tab found');
   }
+
   return tabs[0];
 });
 
 const attachDebugger = tab => co(function* () {
-  // Attach target to global namespace.
   target = { tabId: tab.id };
   const protocol = '1.2';
   yield cp.debugger.attach(target, protocol);
@@ -142,75 +142,50 @@ const attachDebugger = tab => co(function* () {
 });
 
 const getRootNode = () => co(function* () {
+  /**
+   * Can't use `sendDebugCommand` for this one because
+   * it would cause a mutually recursive infinite loop.
+   */
   if (!target) {
-    return new Error('getRootNode: no target defined');
+    return new Error(method, ': no target defined');
   }
-  const command = {
-    target,
-    method: 'DOM.getDocument',
-    commandParams: {
-      depth: -1,  // -1 gets all children recursively
-    },
-  };
+
   const res = yield cp.debugger.sendCommand(
-    command.target,
-    command.method,
-    command.commandParams
+    target,
+    'DOM.getDocument',
+    { depth: -1 }
   );
-
-  if (!res) {
-    return new Error('getRootNode:', chrome.runtime.lastError);
-  }
-
   root = res.root;
-  socket.emit('got nodes', { root });
   return root;
 });
 
-const getNodeId = selector => co(function* () {
+const sendDebugCommand = (method, params) => co(function* () {
   if (!target) {
-    return new Error('queryNode: no target defined');
+    return new Error(method, ': no target defined');
   }
-
-  // Get root node if necessary.
   if (!root) {
-    yield getRootNode();
+    return new Error(method, ': no document root defined');
   }
 
-  const command = {
-    target,
-    method: 'DOM.querySelector',
-    commandParams: {
-      nodeId: root.nodeId,
-      selector,
-    },
-  };
-
-  const res = yield cp.debugger.sendCommand(
-    command.target,
-    command.method,
-    command.commandParams
-  );
+  const res = yield cp.debugger.sendCommand(target, method, params);
 
   if (!res) {
-    return new Error('getRootNode:', chrome.runtime.lastError);
+    return new Error(method, ':', chrome.runtime.lastError);
   }
+  return res;
+});
 
-  const { nodeId } = res;
-  return nodeId;
+const _getNodeId = selector => co(function* () {
+  const res = yield sendDebugCommand('DOM.querySelector', {
+    nodeId: root.nodeId,
+    selector,
+  });
+  return res.nodeId;
 });
 
 const getNode = selector => co(function* () {
-  if (!target) {
-    return new Error('getNode: no target defined');
-  }
-  // Get root node if necessary.
-  if (!root) {
-    yield getRootNode();
-  }
-
   // BFS for Node object corresponding to the given nodeId.
-  const id = yield getNodeId(selector);
+  const id = yield _getNodeId(selector);
   const queue = [ root ];
   let node = null;
 
@@ -238,24 +213,12 @@ const getNodeMatchedStyles = nodeId =>
     nodeId
   });
 
-const sendDebugCommand = (method, params) => co(function* () {
-  if (!target) {
-    return new Error(method, ': no target defined');
-  }
-
-  const res = yield cp.debugger.sendCommand(target, method, params);
-
-  if (!res) {
-    return new Error(method, ':', chrome.runtime.lastError);
-  }
-  return res;
-});
-
 const log = data => console.log(data);
 
 function main() {
   getActiveTab()
     .then(attachDebugger)
+    .then(getRootNode)
     .then(log)
     .catch(log);
 }
