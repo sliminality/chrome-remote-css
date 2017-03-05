@@ -14,7 +14,7 @@ const _getActiveTab = () => co(function* () {
   });
 
   if (tabs.length === 0) {
-    return new Error('_getActiveTab: no active tab found');
+    throw new Error('_getActiveTab: no active tab found');
   }
 
   return tabs[0];
@@ -29,7 +29,7 @@ const _attachDebugger = tab => co(function* () {
 
 const _detachDebugger = () => {
   if (!target) {
-    return new Error('_detachDebugger: no debugger to detach');
+    throw new Error('_detachDebugger: no debugger to detach');
   }
   cp.debugger.detach(target);
   log(`Detached from target ${target.tabId}`);
@@ -43,7 +43,7 @@ const getRootNode = () => co(function* () {
    * it would cause a mutually recursive infinite loop.
    */
   if (!target) {
-    return new Error(method, ': no target defined');
+    throw new Error(method, ': no target defined');
   }
 
   const res = yield cp.debugger.sendCommand(
@@ -57,16 +57,16 @@ const getRootNode = () => co(function* () {
 
 const _sendDebugCommand = (method, params) => co(function* () {
   if (!target) {
-    return new Error(method, ': no target defined');
+    throw new Error(method, ': no target defined');
   }
   if (!root) {
-    return new Error(method, ': no document root defined');
+    throw new Error(method, ': no document root defined');
   }
 
   const res = yield cp.debugger.sendCommand(target, method, params);
 
   if (!res) {
-    return new Error(method, ':', chrome.runtime.lastError);
+    throw new Error(method, ':', chrome.runtime.lastError);
   }
   return res;
 });
@@ -99,7 +99,7 @@ const getNode = selector => co(function* () {
   }
 
   if (!node) {
-    return new Error('getNode: node not found');
+    throw new Error('getNode: node not found');
   }
   return node;
 });
@@ -115,7 +115,7 @@ const onDebuggerDetach = (source, reason) => {
   log(`Detached from target ${source}: ${reason}`);
 };
 
-const log = data => console.log(data);
+const log = (...data) => console.log(...data);
 
 const toggleDebugger = () => co(function* () {
   if (target) {
@@ -142,6 +142,28 @@ let connected = false;
 
 const socket = io.connect(`http://localhost:${port}`);
 
+const onServerRequest = ({ id, fn, what, who }) => co(function* () {
+  console.group(id);
+  log('Server requested', what, 'for', who);
+  let result;
+  try {
+    result = yield fn(who);
+    socket.emit(`ext.response.${what}`, {
+      id,
+      [what]: result,
+    });
+    log('Returned', what, 'for', who);
+  } catch (err) {
+    log(err);
+    socket.emit('ext.response.error', {
+      id,
+      name: err.name,
+      message: err.message,
+    });
+  }
+  console.groupEnd();
+});
+
 socket.on('connect', () => {
   connected = true;
   log(`Connected to socket: ${socket.id}`);
@@ -152,28 +174,18 @@ socket.on('disconnect', () => {
   log('Disconnected from socket');
 });
 
-socket.on('data.request.DOM', ({ id, selector }) => {
-  log(`Node requested: ${selector}`);
-  getNode(selector)
-    .then(node => socket.emit('data.response.DOM', {
-      id,
-      node,
-    }))
-    .catch(err => socket.emit('data.response.error', {
-      id,
-      message: err,
-    }));
-});
+socket.on('server.request.node', ({ id, selector }) =>
+  onServerRequest({
+    id,
+    fn: getNode,
+    what: 'node',
+    who: selector,
+  }));
 
-socket.on('data.request.styles', ({ id, nodeId }) => {
-  log(`Styles requested for node: ${nodeId}`);
-  getNodeMatchedStyles(nodeId)
-    .then(styles => socket.emit('data.response.styles', {
-      id,
-      styles,
-    }))
-    .catch(err => socket.emit('data.response.styles', {
-      id,
-      message: err,
-    }));
-});
+socket.on('server.request.styles', ({ id, nodeId }) =>
+  onServerRequest({
+    id,
+    fn: getNodeMatchedStyles,
+    what: 'styles',
+    who: nodeId,
+  }));
