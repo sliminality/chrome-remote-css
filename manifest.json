@@ -10,7 +10,7 @@
     // "scripts": ["background.js"],
     "page": "background.html"
   },
-  "content_security_policy": "script-src 'self' https://wzrd.in https://cdn-orig.socket.io http://localhost:3000 https://unpkg.com; object-src 'self'",
+  "content_security_policy": "script-src 'self' http://localhost:3000 https://unpkg.com; object-src 'self'",
   "permissions": [
     "tabs",
     "activeTab",
