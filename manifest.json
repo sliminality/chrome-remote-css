@@ -1,16 +1,20 @@
 {
   "manifest_version": 2,
   "name": "chrome-remote-css",
-  "description": "expose Chrome CSSOM",
+  "description": "expose DOM and CSSOM on a webpage over a socket.io connection",
   "version": "0.01",
   "browser_action": {
     "default_icon": "icon.png"
   },
   "background": {
-    // "scripts": ["background.js"],
+    // "scripts": [
+    //   "socket.io.js",
+    //   "https://unpkg.com/chrome-promise@2.0.2",
+    //   "background.js"
+    // ]
     "page": "background.html"
   },
-  "content_security_policy": "script-src 'self' http://localhost:3000 https://unpkg.com; object-src 'self'",
+  "content_security_policy": "script-src 'self' https://unpkg.com; object-src 'self'",
   "permissions": [
     "tabs",
     "activeTab",

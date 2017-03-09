@@ -1,210 +1,198 @@
-/**
- * Chrome debugger functions
- */
-let target = null;
-let root = null;
-let selector = 'body > main > section:nth-child(3) > div:nth-child(2) > figure';
-
 const cp = new ChromePromise();
 
-const _getActiveTab = () => co(function* () {
-  const tabs = yield cp.tabs.query({
+class BrowserEndpoint {
+  constructor(port) {
+    this.socket = io(`http://localhost:${port}/browsers`, {
+      autoConnect: false,
+      reconnectionAttempts: 5,
+    });
+    this.target = null;
+    this.document = null;
+  }
+
+  /**
+   * Prepare to receive requests for debugger data.
+   */
+  async initConnections(tabId) {
+    // Mount debugger.
+    const protocol = '1.2';
+    await cp.debugger.attach({ tabId }, protocol);
+
+    this.target = { tabId };
+    chrome.debugger.onDetach.addListener(this._onDebuggerDetach.bind(this));
+    console.log('Attached debugger to target', this.target);
+
+    // Once debugger is mounted, get the DOM.
+    this.document = await this._getDocumentRoot();
+    console.log('Retrieved document root', this.document);
+
+    // Once we have the DOM and are ready to handle
+    // incoming requests, open the socket.
+    const openSocket = () => new Promise(resolve => {
+      this.socket.on('connect', resolve);
+      this.socket.open();
+    });
+    await openSocket();
+    this.socket.on('data.req', this.onRequest.bind(this));
+    this.socket.on('disconnect', this._onSocketDisconnect.bind(this));
+    console.log('Opened socket', this.socket);
+  }
+
+  /**
+   * Set the root of the document.
+   */
+  async _getDocumentRoot() {
+    const { root } = await this._sendDebugCommand({
+      method: 'DOM.getDocument',
+      params: { depth: -1 },
+    });
+    return root;
+  }
+
+  /**
+   * Get the nodeId of the first match for the specified selector.
+   */
+  async _getNodeId(selector) {
+    const { nodeId } = await this._sendDebugCommand({
+      method: 'DOM.querySelector',
+      params: {
+        selector,
+        nodeId: this.document.nodeId,
+      },
+    });
+    return nodeId;
+  }
+
+  /**
+   * Get the DOM subtree for the node corresponding
+   * to the given selector.
+   */
+  async _getNode(selector) {
+    // First, we need to get the nodeId of the desired node.
+    const id = await this._getNodeId(selector);
+
+    // Then we search the document for the corresponding Node object.
+    const q = [ this.document ];
+
+    while (q.length > 0) {
+      const node = q.shift();
+      if (node.nodeId === id) {
+        return { node };
+      }
+      if (node.children) {
+        q.push(...node.children);
+      }
+    }
+
+    // If it fails, return an Error object, which
+    // will be checked by the caller and emitted.
+    return new Error(`couldn't find node matching selector: ${selector}`);
+  }
+
+  /**
+   * Dispatch an incoming request from the socket
+   * server.
+   */
+  async onRequest(req) {
+    const responseTypes = {
+      REQUEST_NODE: 'RECEIVE_NODE',
+      REQUEST_STYLES: 'RECEIVE_STYLES',
+    };
+
+    const dispatch = {
+      REQUEST_NODE: ({ selector }) =>
+        this._getNode(selector),
+      REQUEST_STYLES: ({ nodeId }) =>
+        this._sendDebugCommand({
+          method: 'CSS.getMatchedStylesForNode',
+          params: { nodeId },
+        }),
+      DEFAULT: ({ type }) =>
+        new Error(`unrecognized request type ${type}`),
+    };
+
+    const action = dispatch[req.type] || dispatch['DEFAULT'];
+    const result = await action(req);
+
+    if (result instanceof Error) {
+      this.socket.emit('data.err', {
+        id: req.id,
+        type: responseTypes[req.type],
+        message: result.message,
+      });
+    } else {
+      this.socket.emit('data.res', Object.assign({},
+        req,
+        result,
+        { type: responseTypes[req.type],
+      }));
+    }
+  }
+
+  /**
+   * Dispatch a command to the chrome.debugger API.
+   */
+  async _sendDebugCommand({ method, params }) {
+    return await cp.debugger.sendCommand(this.target, method, params);
+  }
+
+  /**
+   * Clean up socket connection and properties.
+   */
+  async cleanup() {
+    if (this.socket && this.socket.connected) {
+      this.socket.close();
+    }
+
+    if (this.target) {
+      await cp.debugger.detach(this.target);
+    }
+
+    if (window.endpoint) {
+      delete window.endpoint;
+    }
+  }
+
+  _onSocketDisconnect() {
+    this.socket.off();
+    this.socket = null;
+    console.log('Disconnected from socket');
+    this.cleanup();
+  }
+
+  _onDebuggerDetach() {
+    if (this.target) {
+      this.target = null;
+      this.document = null;
+      console.log('Detached from debugging target');
+    }
+    this.cleanup();
+  }
+}
+
+async function getActiveTab() {
+  const tabs = await cp.tabs.query({
     active: true,
     currentWindow: true,
   });
 
   if (tabs.length === 0) {
-    throw new Error('_getActiveTab: no active tab found');
-  }
-
-  return tabs[0];
-});
-
-const _attachDebugger = tab => co(function* () {
-  target = { tabId: tab.id };
-  const protocol = '1.2';
-  yield cp.debugger.attach(target, protocol);
-  log(`Attached debugger to tab ${target.tabId}`);
-});
-
-const _detachDebugger = () => {
-  if (!target) {
-    throw new Error('_detachDebugger: no debugger to detach');
-  }
-  chrome.debugger.detach(target);
-
-  // If we detach ourselves, `onDebuggerDetach` won't get called.
-  log(`Detached from target ${target.tabId}`);
-  target = null;
-  root = null;
-};
-
-const getRootNode = () => co(function* () {
-  /**
-   * Can't use `_sendDebugCommand` for this one because
-   * it would cause a mutually recursive infinite loop.
-   */
-  if (!target) {
-    throw new Error(method, ': no target defined');
-  }
-
-  const res = yield cp.debugger.sendCommand(
-    target,
-    'DOM.getDocument',
-    { depth: -1 }
-  );
-  root = res.root;
-  return root;
-});
-
-const _sendDebugCommand = (method, params) => co(function* () {
-  if (!target) {
-    throw new Error(method, ': no target defined');
-  }
-  if (!root) {
-    throw new Error(method, ': no document root defined');
-  }
-
-  const res = yield cp.debugger.sendCommand(target, method, params);
-
-  if (!res) {
-    throw new Error(method, ':', chrome.runtime.lastError);
-  }
-  return res;
-});
-
-const _getNodeId = selector => co(function* () {
-  const res = yield _sendDebugCommand('DOM.querySelector', {
-    nodeId: root.nodeId,
-    selector,
-  });
-  return res.nodeId;
-});
-
-const getNode = selector => co(function* () {
-  // BFS for Node object corresponding to the given nodeId.
-  const id = yield _getNodeId(selector);
-  const queue = [ root ];
-  let node = null;
-
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (current.nodeId === id) {
-      node = current;
-      break;
-    }
-    if (current.children) {
-      for (const c of current.children) {
-        queue.push(c);
-      }
-    }
-  }
-
-  if (!node) {
-    throw new Error('getNode: node not found');
-  }
-  return node;
-});
-
-const getNodeMatchedStyles = nodeId =>
-  _sendDebugCommand('CSS.getMatchedStylesForNode', {
-    nodeId
-  });
-
-const onDebuggerDetach = (source, reason) => {
-  target = null;
-  root = null;
-  log(`Detached from target ${source}: ${reason}`);
-};
-
-const log = (...data) => console.log(...data);
-
-const toggleDebugger = () => co(function* () {
-  if (target) {
-    _detachDebugger();
+    throw new Error('getActiveTab: no active tab found');
   } else {
-    try {
-      const tab = yield _getActiveTab();
-      yield _attachDebugger(tab);
-      yield getRootNode();
-    } catch (err) {
-      log(err);
-    }
+    return tabs[0];
   }
-});
+}
 
-/**
- * Socket connection
- */
-const port = 8090;
-const socket = io(`http://localhost:${port}`, {
-  autoConnect: false,
-});
-let connected = false;
+const SOCKET_PORT = 1111;
 
-socket.on('connect', () => {
-  connected = true;
-  log(`Connected to socket: ${socket.id}`);
-});
-
-socket.on('disconnect', () => {
-  connected = false;
-  log('Disconnected from socket');
-});
-
-socket.on('server.request.node', ({ id, selector }) =>
-  onServerRequest({
-    id,
-    fn: getNode,
-    what: 'node',
-    who: selector,
-  }));
-
-socket.on('server.request.styles', ({ id, nodeId }) =>
-  onServerRequest({
-    id,
-    fn: getNodeMatchedStyles,
-    what: 'styles',
-    who: nodeId,
-  }));
-
-const onServerRequest = ({ id, fn, what, who }) => co(function* () {
-  console.group(id);
-  log('Server requested', what, 'for', who);
-  let result;
-  try {
-    result = yield fn(who);
-    socket.emit(`ext.response.${what}`, {
-      id,
-      [what]: result,
-    });
-    log('Returned', what, 'for', who);
-  } catch (err) {
-    log(err);
-    socket.emit('ext.response.error', {
-      id,
-      name: err.name,
-      message: err.message,
-    });
+async function main() {
+  if (!window.endpoint) {
+    const endpoint = new BrowserEndpoint(SOCKET_PORT);
+    window.endpoint = endpoint;
   }
-  console.groupEnd();
-});
 
-const toggleSocket = () => {
-  if (!connected) {
-    socket.connect();
-  } else {
-    socket.disconnect();
-  }
-};
+  const tab = await getActiveTab();
+  await window.endpoint.initConnections(tab.id);
+}
 
-/**
- * Initialize stuff
- */
-const start = () => {
-  toggleDebugger();
-  toggleSocket();
-};
-
-chrome.browserAction.onClicked.addListener(start);
-chrome.debugger.onDetach.addListener(onDebuggerDetach);
+chrome.browserAction.onClicked.addListener(main);
