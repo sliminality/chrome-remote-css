@@ -90,6 +90,35 @@ class BrowserEndpoint {
   }
 
   /**
+   * Get computed and matched styles for the given node.
+   */
+  async _getStyles(nodeId) {
+    const matchedStylesCmd = {
+      method: 'CSS.getMatchedStylesForNode',
+      params: { nodeId },
+    };
+    const compStylesCmd = {
+      method: 'CSS.getComputedStyleForNode',
+      params: { nodeId },
+    };
+    const [ matchedStyles, compStyles ] = await Promise.all([
+      this._sendDebugCommand(matchedStylesCmd),
+      this._sendDebugCommand(compStylesCmd),
+    ]);
+    const { computedStyle } = compStyles;
+    // Turn computedStyle into an object like a civilized human.
+    const cs = computedStyle.reduce(
+      (memo, current) => Object.assign(memo, {
+        [current.name]: current.value,
+      }), {});
+
+    return Object.assign({},
+      matchedStyles,
+      { computedStyle: cs }
+    );
+  }
+
+  /**
    * Dispatch an incoming request from the socket
    * server.
    */
@@ -103,10 +132,7 @@ class BrowserEndpoint {
       REQUEST_NODE: ({ selector }) =>
         this._getNode(selector),
       REQUEST_STYLES: ({ nodeId }) =>
-        this._sendDebugCommand({
-          method: 'CSS.getMatchedStylesForNode',
-          params: { nodeId },
-        }),
+        this._getStyles(nodeId),
       DEFAULT: ({ type }) =>
         new Error(`unrecognized request type ${type}`),
     };
@@ -124,8 +150,8 @@ class BrowserEndpoint {
       this.socket.emit('data.res', Object.assign({},
         req,
         result,
-        { type: responseTypes[req.type],
-      }));
+        { type: responseTypes[req.type] }
+      ));
     }
   }
 
