@@ -89,24 +89,44 @@ class BrowserEndpoint {
    * to the given selector.
    * Takes a selector string or a nodeId number.
    */
-  async _getNode(what) {
+  async _getNode(what, offsetParent = false) {
     const id = typeof what === 'number'
       ? what
       : await this._getNodeId(what);
 
     // Then we search the document for the corresponding Node object.
     const q = [ this.document ];
+    const targets = new Set([id]);
+    const found = {};
+
+    // Optionally also retrieve the node's offsetParent.
+    let offsetParentId;
+    if (offsetParent) {
+      offsetParentId = await this.getOffsetParentId(id);
+      targets.add(offsetParentId);
+    }
 
     while (q.length > 0) {
       const node = q.shift();
-      if (node.nodeId === id) {
-        return { node };
+      if (targets.has(node.nodeId)) {
+        targets.delete(node.nodeId);
+        found[node.nodeId] = node;
+
+        if (targets.size === 0) {
+          const main = found[id];
+          let result = Object.assign({}, main);
+          if (offsetParent) {
+            result = Object.assign({}, result, {
+              offsetParent: found[offsetParentId],
+            });
+          }
+          return { node: result };
+        }
       }
       if (node.children) {
         q.push(...node.children);
       }
     }
-
     // If it fails, return an Error object, which
     // will be checked by the caller and emitted.
     return new Error(`couldn't find node matching selector: ${selector}`);
@@ -154,6 +174,33 @@ class BrowserEndpoint {
   }
 
   /**
+   * Get the nodeId of the given node's offsetParent.
+   */
+  async getOffsetParentId(nodeId) {
+    // Set the node in question to the "currently"
+    // "inspected" node, so we can use $0 in our
+    // evaluation.
+    await this._sendDebugCommand({
+      method: 'DOM.setInspectedNode',
+      params: { nodeId },
+    });
+    const { result } = await this._sendDebugCommand({
+      method: 'Runtime.evaluate',
+      params: {
+        expression: '$0.parentNode',
+        includeCommandLineAPI: true,
+      },
+    });
+    const { objectId } = result;
+    const offsetParentNode = await this._sendDebugCommand({
+      method: 'DOM.requestNode',
+      params: { objectId },
+    });
+    const offsetParentNodeId = offsetParentNode.nodeId;
+    return offsetParentNodeId;
+  }
+
+  /**
    * Dispatch an incoming request from the socket
    * server.
    */
@@ -165,13 +212,12 @@ class BrowserEndpoint {
 
     const dispatch = {
       REQUEST_NODE: ({ selector }) =>
-        this._getNode(selector),
+        this._getNode(selector, true),
       REQUEST_STYLES: ({ nodeId }) =>
         this._getStyles(nodeId),
       DEFAULT: ({ type }) =>
         new Error(`unrecognized request type ${type}`),
     };
-
     const action = dispatch[req.type] || dispatch['DEFAULT'];
     const result = await action(req);
 
