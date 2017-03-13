@@ -46,7 +46,28 @@ class BrowserEndpoint {
       method: 'DOM.getDocument',
       params: { depth: -1 },
     });
-    return root;
+    // Set parentId value on every node.
+    const withParents = this._addParentIds(-1)(root);
+    return withParents;
+  }
+
+  /**
+   * Set parentId on every node in a given tree.
+   */
+  _addParentIds(parentId) {
+    return (node) => {
+      const { children, nodeId } = node;
+      if (children && children.length) {
+        const edit = {
+          parentId,
+          children: children.map(this._addParentIds(nodeId)),
+        };
+        return Object.assign({}, node, edit);
+      } else {
+        const edit = { parentId: nodeId };
+        return Object.assign({}, node, edit);
+      }
+    }
   }
 
   /**
@@ -66,10 +87,12 @@ class BrowserEndpoint {
   /**
    * Get the DOM subtree for the node corresponding
    * to the given selector.
+   * Takes a selector string or a nodeId number.
    */
-  async _getNode(selector) {
-    // First, we need to get the nodeId of the desired node.
-    const id = await this._getNodeId(selector);
+  async _getNode(what) {
+    const id = typeof what === 'number'
+      ? what
+      : await this._getNodeId(what);
 
     // Then we search the document for the corresponding Node object.
     const q = [ this.document ];
@@ -93,6 +116,8 @@ class BrowserEndpoint {
    * Get computed and matched styles for the given node.
    */
   async _getStyles(nodeId) {
+    const { node } = await this._getNode(nodeId);
+    const { parentId } = node;
     const matchedStylesCmd = {
       method: 'CSS.getMatchedStylesForNode',
       params: { nodeId },
@@ -101,20 +126,30 @@ class BrowserEndpoint {
       method: 'CSS.getComputedStyleForNode',
       params: { nodeId },
     };
-    const [ matchedStyles, compStyles ] = await Promise.all([
-      this._sendDebugCommand(matchedStylesCmd),
-      this._sendDebugCommand(compStylesCmd),
-    ]);
-    const { computedStyle } = compStyles;
+    const parentCompStylesCmd = {
+      method: 'CSS.getComputedStyleForNode',
+      params: { nodeId: parentId },
+    };
+    const [ matchedStyles, compStyles, parentCompStyles ] =
+      await Promise.all([
+        this._sendDebugCommand(matchedStylesCmd),
+        this._sendDebugCommand(compStylesCmd),
+        this._sendDebugCommand(parentCompStylesCmd),
+      ]);
     // Turn computedStyle into an object like a civilized human.
-    const cs = computedStyle.reduce(
-      (memo, current) => Object.assign(memo, {
-        [current.name]: current.value,
-      }), {});
-
+    const toObject = (memo, current) => Object.assign(memo, {
+      [current.name]: current.value,
+    });
+    const cs = compStyles.computedStyle
+      .reduce(toObject, {});
+    const pcs = parentCompStyles.computedStyle
+      .reduce(toObject, {});
     return Object.assign({},
       matchedStyles,
-      { computedStyle: cs }
+      {
+        computedStyle: cs,
+        parentComputedStyle: pcs,
+      }
     );
   }
 
@@ -159,7 +194,9 @@ class BrowserEndpoint {
    * Dispatch a command to the chrome.debugger API.
    */
   async _sendDebugCommand({ method, params }) {
-    return await cp.debugger.sendCommand(this.target, method, params);
+    const result =
+      await cp.debugger.sendCommand(this.target, method, params);
+    return result;
   }
 
   /**
