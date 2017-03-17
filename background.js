@@ -64,7 +64,7 @@ class BrowserEndpoint {
         };
         return Object.assign({}, node, edit);
       } else {
-        const edit = { parentId: nodeId };
+        const edit = { parentId };
         return Object.assign({}, node, edit);
       }
     }
