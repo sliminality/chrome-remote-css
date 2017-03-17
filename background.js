@@ -114,11 +114,13 @@ class BrowserEndpoint {
 
         if (targets.size === 0) {
           const main = found[id];
-          let result = Object.assign({}, main);
+          let result;
           if (offsetParent) {
             result = Object.assign({}, result, {
               offsetParent: found[offsetParentId],
             });
+          } else {
+            result = Object.assign({}, main);
           }
           return { node: result };
         }
@@ -138,38 +140,31 @@ class BrowserEndpoint {
   async _getStyles(nodeId) {
     const { node } = await this._getNode(nodeId);
     const { parentId } = node;
-    const matchedStylesCmd = {
-      method: 'CSS.getMatchedStylesForNode',
-      params: { nodeId },
-    };
-    const compStylesCmd = {
-      method: 'CSS.getComputedStyleForNode',
-      params: { nodeId },
-    };
-    const parentCompStylesCmd = {
-      method: 'CSS.getComputedStyleForNode',
-      params: { nodeId: parentId },
-    };
-    const [ matchedStyles, compStyles, parentCompStyles ] =
-      await Promise.all([
-        this._sendDebugCommand(matchedStylesCmd),
-        this._sendDebugCommand(compStylesCmd),
-        this._sendDebugCommand(parentCompStylesCmd),
-      ]);
-    // Turn computedStyle into an object like a civilized human.
+    const commands = [
+      {
+        method: 'CSS.getMatchedStylesForNode',
+        params: { nodeId },
+      }, {
+        method: 'CSS.getComputedStyleForNode',
+        params: { nodeId },
+      }, {
+        method: 'CSS.getComputedStyleForNode',
+        params: { nodeId: parentId },
+      },
+    ];
+    const commandPromises = commands.map(this._sendDebugCommand);
+    const [ matchedStyles, ...computedStyles ] = await Promise.all(commandPromises);
+
+    // Turn computed style arrays into ComputedStyleObjects.
     const toObject = (memo, current) => Object.assign(memo, {
       [current.name]: current.value,
     });
-    const cs = compStyles.computedStyle
-      .reduce(toObject, {});
-    const pcs = parentCompStyles.computedStyle
-      .reduce(toObject, {});
+    const reduceToObject = arr => arr.reduce(toObject, {});
+    const [ computedStyle, parentComputedStyle ] = computedStyles.map(reduceToObject);
     return Object.assign({},
       matchedStyles,
-      {
-        computedStyle: cs,
-        parentComputedStyle: pcs,
-      }
+      computedStyle,
+      parentComputedStyle
     );
   }
 
