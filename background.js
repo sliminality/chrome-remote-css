@@ -94,43 +94,58 @@ class BrowserEndpoint {
       ? what
       : await this._getNodeId(what);
 
-    // Then we search the document for the corresponding Node object.
-    const q = [ this.document ];
-    const targets = new Set([id]);
+    /**
+     * Search the cached document breadth-first for the
+     * specified node. Optionally also search for the
+     * offsetParent.
+     *
+     * wanted: Set<NodeId>
+     *   stores the nodeIds we are looking for, but haven't found.
+     *
+     * found: Map<NodeId, Node>
+     *   stores the Nodes we've found, associated with their nodeId.
+     */
+    const queue = [ this.document ];
+    const wanted = new Set([ id ]);
     const found = {};
 
-    // Optionally also retrieve the node's offsetParent.
-    let offsetParentId;
+    // Optionally also search for the node's offsetParent.
     if (offsetParent) {
-      offsetParentId = await this.getOffsetParentId(id);
-      targets.add(offsetParentId);
+      const offsetParentId = await this.getOffsetParentId(id);
+      wanted.add(offsetParentId);
     }
 
-    while (q.length > 0) {
-      const node = q.shift();
-      if (targets.has(node.nodeId)) {
-        targets.delete(node.nodeId);
-        found[node.nodeId] = node;
+    while (queue.length > 0) {
+      const node = queue.shift();
+      const { nodeId } = node;
 
-        if (targets.size === 0) {
-          const main = found[id];
-          let result;
-          if (offsetParent) {
-            result = Object.assign({}, result, {
-              offsetParent: found[offsetParentId],
-            });
-          } else {
-            result = Object.assign({}, main);
-          }
-          return { node: result };
-        }
+      if (wanted.has(nodeId)) {
+        found[nodeId] = node;
+        wanted.delete(nodeId);
       }
+
+      /**
+       * If `wanted` is empty, we've found everything.
+       * Attach the offsetParent to the main node, and
+       * return the main node as the result.
+       */
+      if (wanted.size === 0) {
+        const main = found[id];
+        const result = offsetParent
+          ? Object.assign({}, main, { offsetParent: found[offsetParentId] })
+          : main;
+        return { node: result };
+      }
+
+      // Add children to the search queue.
       if (node.children) {
-        q.push(...node.children);
+        queue.push(...node.children);
       }
     }
-    // If it fails, return an Error object, which
-    // will be checked by the caller and emitted.
+    /**
+     * If search fails, return an Error object, which will be
+     * checked by the caller and emitted back to the server.
+     */
     return new Error(`couldn't find node matching selector: ${selector}`);
   }
 
@@ -140,6 +155,7 @@ class BrowserEndpoint {
   async _getStyles(nodeId) {
     const { node } = await this._getNode(nodeId);
     const { parentId } = node;
+
     const commands = [{
       method: 'CSS.getMatchedStylesForNode',
       params: { nodeId },
@@ -150,8 +166,11 @@ class BrowserEndpoint {
       method: 'CSS.getComputedStyleForNode',
       params: { nodeId: parentId },
     }];
-    const commandPromises = commands.map(this._sendDebugCommand.bind(this));
-    const [ matchedStyles, ...computedStyles ] = await Promise.all(commandPromises);
+
+    const commandPromises =
+      commands.map(this._sendDebugCommand.bind(this));
+    const [ matchedStyles, ...computedStyles ] =
+      await Promise.all(commandPromises);
 
     // Turn computed style arrays into ComputedStyleObjects.
     const toObject = (memo, current) => Object.assign(memo, {
