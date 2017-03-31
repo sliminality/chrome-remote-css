@@ -7,11 +7,6 @@
     "default_icon": "icon.png"
   },
   "background": {
-    // "scripts": [
-    //   "socket.io.js",
-    //   "https://unpkg.com/chrome-promise@2.0.2",
-    //   "background.js"
-    // ]
     "page": "background.html"
   },
   "content_security_policy": "script-src 'self' https://unpkg.com; object-src 'self'",
