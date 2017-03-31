@@ -1,4 +1,5 @@
 const cp = new ChromePromise();
+const PROTOCOL = '1.2';
 
 class BrowserEndpoint {
   constructor(port) {
@@ -15,8 +16,7 @@ class BrowserEndpoint {
    */
   async initConnections(tabId) {
     // Mount debugger.
-    const protocol = '1.2';
-    await cp.debugger.attach({ tabId }, protocol);
+    await cp.debugger.attach({ tabId }, PROTOCOL);
 
     this.target = { tabId };
     chrome.debugger.onDetach.addListener(this._onDebuggerDetach.bind(this));
@@ -140,19 +140,17 @@ class BrowserEndpoint {
   async _getStyles(nodeId) {
     const { node } = await this._getNode(nodeId);
     const { parentId } = node;
-    const commands = [
-      {
-        method: 'CSS.getMatchedStylesForNode',
-        params: { nodeId },
-      }, {
-        method: 'CSS.getComputedStyleForNode',
-        params: { nodeId },
-      }, {
-        method: 'CSS.getComputedStyleForNode',
-        params: { nodeId: parentId },
-      },
-    ];
-    const commandPromises = commands.map(this._sendDebugCommand);
+    const commands = [{
+      method: 'CSS.getMatchedStylesForNode',
+      params: { nodeId },
+    }, {
+      method: 'CSS.getComputedStyleForNode',
+      params: { nodeId },
+    }, {
+      method: 'CSS.getComputedStyleForNode',
+      params: { nodeId: parentId },
+    }];
+    const commandPromises = commands.map(this._sendDebugCommand.bind(this));
     const [ matchedStyles, ...computedStyles ] = await Promise.all(commandPromises);
 
     // Turn computed style arrays into ComputedStyleObjects.
@@ -160,11 +158,14 @@ class BrowserEndpoint {
       [current.name]: current.value,
     });
     const reduceToObject = arr => arr.reduce(toObject, {});
-    const [ computedStyle, parentComputedStyle ] = computedStyles.map(reduceToObject);
+    const [ computedStyle, parentComputedStyle ] = computedStyles
+      // Extract the computed styles array from the response object.
+      .map(({ computedStyle }) => reduceToObject(computedStyle));
+
     return Object.assign({},
       matchedStyles,
-      computedStyle,
-      parentComputedStyle
+      { computedStyle },
+      { parentComputedStyle }
     );
   }
 
@@ -207,7 +208,7 @@ class BrowserEndpoint {
 
     const dispatch = {
       REQUEST_NODE: ({ selector }) =>
-        this._getNode(selector, true),
+        this._getNode(selector, false),
       REQUEST_STYLES: ({ nodeId }) =>
         this._getStyles(nodeId),
       DEFAULT: ({ type }) =>
@@ -247,11 +248,9 @@ class BrowserEndpoint {
     if (this.socket && this.socket.connected) {
       this.socket.close();
     }
-
     if (this.target) {
       await cp.debugger.detach(this.target);
     }
-
     if (window.endpoint) {
       delete window.endpoint;
     }
