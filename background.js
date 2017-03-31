@@ -12,6 +12,23 @@ class BrowserEndpoint {
   }
 
   /**
+   * Get the currently active tab in the focused Chrome
+   * instance.
+   */
+  static async getActiveTab() {
+    const tabs = await cp.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
+
+    if (tabs.length === 0) {
+      throw new Error('getActiveTab: no active tab found');
+    } else {
+      return tabs[0];
+    }
+  }
+
+  /**
    * Prepare to receive requests for debugger data.
    */
   async initConnections(tabId) {
@@ -292,19 +309,6 @@ class BrowserEndpoint {
   }
 }
 
-async function getActiveTab() {
-  const tabs = await cp.tabs.query({
-    active: true,
-    currentWindow: true,
-  });
-
-  if (tabs.length === 0) {
-    throw new Error('getActiveTab: no active tab found');
-  } else {
-    return tabs[0];
-  }
-}
-
 const SOCKET_PORT = 1111;
 
 async function main() {
@@ -313,7 +317,7 @@ async function main() {
     window.endpoint = endpoint;
   }
 
-  const tab = await getActiveTab();
+  const tab = await BrowserEndpoint.getActiveTab();
   await window.endpoint.initConnections(tab.id);
 }
 
