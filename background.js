@@ -127,8 +127,10 @@ class BrowserEndpoint {
     const found = {};
 
     // Optionally also search for the node's offsetParent.
+    let offsetParentId;  // Outer scope to permit access during search.
+
     if (offsetParent) {
-      const offsetParentId = await this.getOffsetParentId(id);
+      offsetParentId = await this.getOffsetParentId(id);
       wanted.add(offsetParentId);
     }
 
@@ -244,7 +246,7 @@ class BrowserEndpoint {
 
     const dispatch = {
       REQUEST_NODE: ({ selector }) =>
-        this._getNode(selector, false),
+        this._getNode(selector, true),  // Get offset parent
       REQUEST_STYLES: ({ nodeId }) =>
         this._getStyles(nodeId),
       DEFAULT: ({ type }) =>
