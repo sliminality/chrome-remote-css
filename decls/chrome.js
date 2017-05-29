@@ -28,6 +28,9 @@ declare type Node = {
   name?: string,
   pseudoType?: string,
   pseudoElements?: Node[],
+
+  // Added properties
+  offsetParent?: Node,
 };
 
 ({
