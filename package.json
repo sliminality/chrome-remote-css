@@ -11,6 +11,6 @@
     "flow-remove-types": "^1.2.1"
   },
   "scripts": {
-    "build": "flow-remove-types src/ -d build/"
+    "build": "flow-remove-types src/ -d ."
   }
 }
