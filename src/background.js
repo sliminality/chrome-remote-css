@@ -462,8 +462,19 @@ async function main() {
     window.endpoint = endpoint;
   }
 
-  const tab = await BrowserEndpoint.getActiveTab();
-  await window.endpoint.initConnections(tab.id);
+  const { id: tabId } = await BrowserEndpoint.getActiveTab();
+  const hasConnection = window.endpoint.target
+    && window.endpoint.target.tabId === tabId;
+
+  if (!hasConnection) {
+    // Need to init connections.
+    await window.endpoint.initConnections(tabId);
+  }
+
+  /**
+   * Invoke node selection, now that we are guaranteed
+   * to have an active endpoint attached to current tab.
+   */
   window.endpoint.selectNode();
 }
 
