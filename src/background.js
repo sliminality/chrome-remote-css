@@ -387,7 +387,7 @@ class BrowserEndpoint {
 
         // Send resulting node to server.
         this._socketEmit('data.update', {
-          type: 'UPDATE_NODE',
+          type: 'INSPECTED_NODE',
           node: this.inspectedNode,
         });
 
