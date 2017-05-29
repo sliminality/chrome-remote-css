@@ -1,0 +1,16 @@
+{
+  "name": "chrome-remote-css",
+  "version": "1.0.0",
+  "description": "browser extension to expose debugging capabilities over localhost",
+  "main": "background.js",
+  "repository": "https://github.com/sarahlim/chrome-remote-css.git",
+  "author": "Sarah Lim <sarah@sarahlim.com>",
+  "license": "MIT",
+  "devDependencies": {
+    "flow-bin": "^0.47.0",
+    "flow-remove-types": "^1.2.1"
+  },
+  "scripts": {
+    "build": "flow-remove-types src/ -d build/"
+  }
+}

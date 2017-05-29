@@ -1,7 +1,21 @@
+// @flow
 const cp = new ChromePromise();
 const PROTOCOL = '1.2';
 
+type Socket = Object;
+type Target = {
+  tabId: number,
+};
+type NodeId = number;
+
+declare var io: (string, ?Object) => Socket;
+declare var chrome: Object;
+
 class BrowserEndpoint {
+  socket: ?Socket;
+  target: ?Target;
+  document: ?Node;
+
   constructor(port) {
     this.socket = io(`http://localhost:${port}/browsers`, {
       autoConnect: false,
@@ -43,16 +57,23 @@ class BrowserEndpoint {
     this.document = await this._getDocumentRoot();
     console.log('Retrieved document root', this.document);
 
-    // Once we have the DOM and are ready to handle
-    // incoming requests, open the socket.
-    const openSocket = () => new Promise(resolve => {
-      this.socket.on('connect', resolve);
-      this.socket.open();
-    });
-    await openSocket();
-    this.socket.on('data.req', this.onRequest.bind(this));
-    this.socket.on('disconnect', this._onSocketDisconnect.bind(this));
-    console.log('Opened socket', this.socket);
+    if (this.socket) {
+      // Once we have the DOM and are ready to handle
+      // incoming requests, open the socket.
+      await (new Promise(resolve => {
+        if (this.socket) {
+          this.socket.on('connect', resolve);
+          this.socket.open();
+        }
+      }));
+
+      this.socket.on('data.req', this.onRequest.bind(this));
+      this.socket.on('disconnect', this._onSocketDisconnect.bind(this));
+
+      console.log('Opened socket', this.socket);
+    } else {
+      console.error('No socket found, could not setup');
+    }
   }
 
   /**
@@ -72,7 +93,7 @@ class BrowserEndpoint {
    * Set parentId on every node in a given tree.
    */
   _addParentIds(parentId) {
-    return (node) => {
+    return node => {
       const { children, nodeId } = node;
       if (children && children.length) {
         const edit = {
@@ -115,6 +136,10 @@ class BrowserEndpoint {
       ? what
       : await this._getNodeId(what);
 
+    if (!this.document) {
+      this.document = await this._getDocumentRoot();
+    }
+
     /**
      * Search the cached document breadth-first for the
      * specified node. Optionally also search for the
@@ -126,12 +151,12 @@ class BrowserEndpoint {
      * found: Map<NodeId, Node>
      *   stores the Nodes we've found, associated with their nodeId.
      */
-    const queue = [ this.document ];
-    const wanted = new Set([ id ]);
-    const found = {};
+    const queue: Node[] = [ this.document ];
+    const wanted: Set<NodeId> = new Set([ id ]);
+    const found: { [NodeId]: Node } = {};
 
     // Optionally also search for the node's offsetParent.
-    let offsetParentId;  // Outer scope to permit access during search.
+    let offsetParentId: ?NodeId;  // Outer scope to permit access during search.
 
     if (offsetParent) {
       offsetParentId = await this.getOffsetParentId(id);
@@ -139,7 +164,7 @@ class BrowserEndpoint {
     }
 
     while (queue.length > 0) {
-      const node = queue.shift();
+      const node: Node = queue.shift();
       const { nodeId } = node;
 
       if (wanted.has(nodeId)) {
@@ -153,10 +178,12 @@ class BrowserEndpoint {
        * return the main node as the result.
        */
       if (wanted.size === 0) {
-        const main = found[id];
-        const result = offsetParent
-          ? Object.assign({}, main, { offsetParent: found[offsetParentId] })
-          : main;
+        let result: Node & { offsetParent: Node } = found[id];
+
+        if (offsetParentId) {
+          result.offsetParent = found[offsetParentId];
+        }
+
         return { node: result };
       }
 
@@ -165,18 +192,27 @@ class BrowserEndpoint {
         queue.push(...node.children);
       }
     }
+
     /**
      * If search fails, return an Error object, which will be
      * checked by the caller and emitted back to the server.
      */
-    return new Error(`couldn't find node matching selector: ${what}`);
+    throw new Error(`couldn't find node matching selector: ${what}`);
   }
 
   /**
    * Get computed and matched styles for the given node.
    */
-  async _getStyles(nodeId) {
-    const { node } = await this._getNode(nodeId);
+  async _getStyles(nodeId): Promise<*> {
+    let node: Node & { offsetParent: Node };
+
+    try {
+      const result = await this._getNode(nodeId);
+      node = result.node;
+    } catch (err) {
+      throw err;
+    }
+
     const { parentId } = node;
 
     const commands = [{
@@ -214,7 +250,7 @@ class BrowserEndpoint {
   /**
    * Get the nodeId of the given node's offsetParent.
    */
-  async getOffsetParentId(nodeId) {
+  async getOffsetParentId(nodeId: NodeId): Promise<NodeId> {
     // Set the node in question to the "currently"
     // "inspected" node, so we can use $0 in our
     // evaluation.
@@ -222,6 +258,7 @@ class BrowserEndpoint {
       method: 'DOM.setInspectedNode',
       params: { nodeId },
     });
+
     const { result } = await this._sendDebugCommand({
       method: 'Runtime.evaluate',
       params: {
@@ -229,6 +266,7 @@ class BrowserEndpoint {
         includeCommandLineAPI: true,
       },
     });
+
     const { objectId } = result;
     const offsetParentNode = await this._sendDebugCommand({
       method: 'DOM.requestNode',
@@ -260,17 +298,26 @@ class BrowserEndpoint {
     const result = await action(req);
 
     if (result instanceof Error) {
-      this.socket.emit('data.err', {
-        id: req.id,
-        type: responseTypes[req.type],
-        message: result.message,
-      });
+      if (this.socket && this.socket.connected) {
+        this.socket.emit('data.err', {
+          id: req.id,
+          type: responseTypes[req.type],
+          message: result.message,
+        });
+      } else {
+        console.error(`Request ${req.id} returned error, but no socket connection`);
+        console.error(result);
+      }
     } else {
-      this.socket.emit('data.res', Object.assign({},
-        req,
-        result,
-        { type: responseTypes[req.type] }
-      ));
+      if (this.socket && this.socket.connected) {
+        this.socket.emit(
+          'data.res',
+          Object.assign({}, req, result, { type: responseTypes[req.type] })
+        );
+      } else {
+        console.log(`Request ${req.id} returned, but no socket connection`);
+        console.log(result);
+      }
     }
   }
 
@@ -278,9 +325,7 @@ class BrowserEndpoint {
    * Dispatch a command to the chrome.debugger API.
    */
   async _sendDebugCommand({ method, params }) {
-    const result =
-      await cp.debugger.sendCommand(this.target, method, params);
-    return result;
+    return await cp.debugger.sendCommand(this.target, method, params);
   }
 
   /**
@@ -299,8 +344,10 @@ class BrowserEndpoint {
   }
 
   _onSocketDisconnect() {
-    this.socket.off();
-    this.socket = null;
+    if (this.socket) {
+      this.socket.off();
+      this.socket = null;
+    }
     console.log('Disconnected from socket');
     this.cleanup();
   }
