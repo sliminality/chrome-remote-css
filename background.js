@@ -84,13 +84,17 @@ class BrowserEndpoint {
         const edit = { parentId };
         return Object.assign({}, node, edit);
       }
-    }
+    };
   }
 
   /**
    * Get the nodeId of the first match for the specified selector.
    */
   async _getNodeId(selector) {
+    if (!this.document) {
+      this.document = await this._getDocumentRoot();
+    }
+
     const { nodeId } = await this._sendDebugCommand({
       method: 'DOM.querySelector',
       params: {
@@ -165,7 +169,7 @@ class BrowserEndpoint {
      * If search fails, return an Error object, which will be
      * checked by the caller and emitted back to the server.
      */
-    return new Error(`couldn't find node matching selector: ${selector}`);
+    return new Error(`couldn't find node matching selector: ${what}`);
   }
 
   /**
