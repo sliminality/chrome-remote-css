@@ -505,3 +505,34 @@ declare type CSSKeyframeRule = {
   keyText: Value,
   style: CSSStyle,
 };
+
+/**
+ * DOM and Overlay
+ */
+
+declare type HighlightConfig = {
+  showInfo?: boolean,
+  showRulers?: boolean,
+  showExtensionlines?: boolean,
+  displayAsMaterial?: boolean,
+  contentColor?: RGBA,
+  paddingColor?: RGBA,
+  borderColor?: RGBA,
+  marginColor?: RGBA,
+  eventTargetColor?: RGBA,
+  shapeColor?: RGBA,
+  shapeMarginColor?: RGBA,
+  selectorList?: string,
+}
+
+/**
+ * RGBA color.
+ * Fields r, g, b are [0-255]
+ * Field a is [0-1]
+ */
+declare type RGBA = {
+  r: number,
+  g: number,
+  b: number,
+  a?: number,
+}
