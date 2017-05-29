@@ -1,7 +1,4 @@
 // @flow
-const cp = new ChromePromise();
-const PROTOCOL = '1.2';
-
 type Socket = Object;
 type Target = {
   tabId: number,
@@ -9,12 +6,19 @@ type Target = {
 type NodeId = number;
 
 declare var io: (string, ?Object) => Socket;
+declare var ChromePromise;
 declare var chrome: Object;
+
+const cp = new ChromePromise();
+const PROTOCOL = '1.2';
 
 class BrowserEndpoint {
   socket: ?Socket;
   target: ?Target;
   document: ?Node;
+  inspectedNode: ?Node;
+
+  _debugEventDispatch: (Target, string, Object) => Promise<*>;
 
   constructor(port) {
     this.socket = io(`http://localhost:${port}/browsers`, {
@@ -23,6 +27,11 @@ class BrowserEndpoint {
     });
     this.target = null;
     this.document = null;
+    this.inspectedNode = null;
+
+    // Bind `this` in the constructor, so we can
+    // detach event handler by reference during cleanup.
+    this._debugEventDispatch = this._debugEventDispatch.bind(this);
   }
 
   /**
@@ -50,36 +59,38 @@ class BrowserEndpoint {
     await cp.debugger.attach({ tabId }, PROTOCOL);
 
     this.target = { tabId };
-    chrome.debugger.onDetach.addListener(this._onDebuggerDetach.bind(this));
+    chrome.debugger.onDetach
+      .addListener(this._onDebuggerDetach.bind(this));
+    chrome.debugger.onEvent
+      .addListener(this._debugEventDispatch);
     console.log('Attached debugger to target', this.target);
 
     // Once debugger is mounted, get the DOM.
-    this.document = await this._getDocumentRoot();
+    this.document = await this.getDocumentRoot();
     console.log('Retrieved document root', this.document);
 
+    // Once we have the DOM and are ready to handle
+    // incoming requests, open the socket.
     if (this.socket) {
-      // Once we have the DOM and are ready to handle
-      // incoming requests, open the socket.
+      // Need to store the value of this.socket to
+      // prevent Flow from invalidating the refinement.
+      const { socket } = this;
       await (new Promise(resolve => {
-        if (this.socket) {
-          this.socket.on('connect', resolve);
-          this.socket.open();
-        }
+        socket.open();
+        socket.on('data.req', this.onRequest.bind(this));
+        socket.on('disconnect', this._onSocketDisconnect.bind(this));
+        socket.on('connect', resolve);
       }));
-
-      this.socket.on('data.req', this.onRequest.bind(this));
-      this.socket.on('disconnect', this._onSocketDisconnect.bind(this));
-
       console.log('Opened socket', this.socket);
     } else {
-      console.error('No socket found, could not setup');
+      console.error('No socket found, could not setup connections');
     }
   }
 
   /**
    * Set the root of the document.
    */
-  async _getDocumentRoot() {
+  async getDocumentRoot() {
     const { root } = await this._sendDebugCommand({
       method: 'DOM.getDocument',
       params: { depth: -1 },
@@ -87,6 +98,28 @@ class BrowserEndpoint {
     // Set parentId value on every node.
     const withParents = this._addParentIds(-1)(root);
     return withParents;
+  }
+
+  /**
+   * Allow the user to select a node for focus.
+   */
+  async selectNode() {
+    let backendNodeId: NodeId;
+
+    // Activate inspect mode.
+    const highlightConfig: HighlightConfig = {
+      contentColor: {
+        r: 255, g: 0, b: 0, a: 0.3,
+      },
+    };
+
+    // Launch inspect mode.
+    this._sendDebugCommand({ method: 'DOM.setInspectMode',
+      params: {
+        mode: 'searchForNode',
+        highlightConfig,
+      },
+    });
   }
 
   /**
@@ -111,9 +144,9 @@ class BrowserEndpoint {
   /**
    * Get the nodeId of the first match for the specified selector.
    */
-  async _getNodeId(selector) {
+  async getNodeId(selector) {
     if (!this.document) {
-      this.document = await this._getDocumentRoot();
+      this.document = await this.getDocumentRoot();
     }
 
     const { nodeId } = await this._sendDebugCommand({
@@ -131,13 +164,13 @@ class BrowserEndpoint {
    * to the given selector.
    * Takes a selector string or a nodeId number.
    */
-  async _getNode(what, offsetParent = false) {
+  async getNode(what, offsetParent = false): Promise<Node> {
     const id = typeof what === 'number'
       ? what
-      : await this._getNodeId(what);
+      : await this.getNodeId(what);
 
     if (!this.document) {
-      this.document = await this._getDocumentRoot();
+      this.document = await this.getDocumentRoot();
     }
 
     /**
@@ -184,7 +217,7 @@ class BrowserEndpoint {
           result.offsetParent = found[offsetParentId];
         }
 
-        return { node: result };
+        return result;
       }
 
       // Add children to the search queue.
@@ -203,12 +236,10 @@ class BrowserEndpoint {
   /**
    * Get computed and matched styles for the given node.
    */
-  async _getStyles(nodeId): Promise<*> {
-    let node: Node & { offsetParent: Node };
-
+  async getStyles(nodeId): Promise<*> {
+    let node: Node;
     try {
-      const result = await this._getNode(nodeId);
-      node = result.node;
+      node = await this.getNode(nodeId);
     } catch (err) {
       throw err;
     }
@@ -287,10 +318,11 @@ class BrowserEndpoint {
     };
 
     const dispatch = {
-      REQUEST_NODE: ({ selector }) =>
-        this._getNode(selector, true),  // Get offset parent
+      REQUEST_NODE: async ({ selector }) =>
+        // Get offset parent
+        ({ node: await this.getNode(selector, true) }),
       REQUEST_STYLES: ({ nodeId }) =>
-        this._getStyles(nodeId),
+        this.getStyles(nodeId),
       DEFAULT: ({ type }) =>
         new Error(`unrecognized request type ${type}`),
     };
@@ -298,26 +330,74 @@ class BrowserEndpoint {
     const result = await action(req);
 
     if (result instanceof Error) {
-      if (this.socket && this.socket.connected) {
-        this.socket.emit('data.err', {
-          id: req.id,
-          type: responseTypes[req.type],
-          message: result.message,
-        });
-      } else {
-        console.error(`Request ${req.id} returned error, but no socket connection`);
-        console.error(result);
-      }
+      this._socketEmit('data.err', {
+        id: req.id,
+        type: responseTypes[req.type],
+        message: result.message,
+      });
     } else {
-      if (this.socket && this.socket.connected) {
-        this.socket.emit(
-          'data.res',
-          Object.assign({}, req, result, { type: responseTypes[req.type] })
-        );
-      } else {
-        console.log(`Request ${req.id} returned, but no socket connection`);
-        console.log(result);
-      }
+      const responseType = responseTypes[req.type];
+      const data = Object.assign({},
+        req,
+        result,
+        { type: responseType }
+      );
+      this._socketEmit('data.res', data);
+    }
+  }
+
+  /**
+   * Handle certain events from the debugger.
+   */
+  _debugEventDispatch(target: Target, method: string, params: Object) {
+    const dispatch = {
+      /**
+       * Fired when a node is inspected after calling DOM.setInspectMode.
+       * Sets this.inspectedNode to the NodeId of the clicked element.
+       */
+      'DOM.inspectNodeRequested': async ({ backendNodeId }) => {
+        // Disable inspection mode.
+        window.endpoint._sendDebugCommand({
+          method: 'DOM.setInspectMode',
+          params: { mode: 'none' },
+        });
+
+        // Get the nodeId corresponding to the backendId.
+        const { nodeIds } = await this._sendDebugCommand({
+          method: 'DOM.pushNodesByBackendIdsToFrontend',
+          params: {
+            backendNodeIds: [backendNodeId],
+          },
+        });
+        const [ inspectedNodeId ] = nodeIds;
+        this.inspectedNode = await this.getNode(inspectedNodeId);
+
+        // Send resulting node to server.
+        this._socketEmit('data.update', {
+          type: 'UPDATE_NODE',
+          node: this.inspectedNode,
+        });
+
+        // Log to debug console.
+        console.log(`Inspecting node ${inspectedNodeId}`, this.inspectedNode);
+      },
+    };
+
+    const action = dispatch[method];
+
+    if (action) {
+      action(params);
+    }
+  };
+
+  /**
+   * Emit data over the socket.
+   */
+  _socketEmit(what: string, data: Object) {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit(what, data);
+    } else {
+      console.error(`No socket connection, couldn't emit message`, data);
     }
   }
 
@@ -336,6 +416,7 @@ class BrowserEndpoint {
       this.socket.close();
     }
     if (this.target) {
+      chrome.debugger.onEvent.removeListener(this._debugEventDispatch);
       await cp.debugger.detach(this.target);
     }
     if (window.endpoint) {
@@ -372,6 +453,7 @@ async function main() {
 
   const tab = await BrowserEndpoint.getActiveTab();
   await window.endpoint.initConnections(tab.id);
+  window.endpoint.selectNode();
 }
 
 chrome.browserAction.onClicked.addListener(main);
