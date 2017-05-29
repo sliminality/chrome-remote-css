@@ -11,6 +11,7 @@ declare var chrome: Object;
 
 const cp = new ChromePromise();
 const PROTOCOL = '1.2';
+const SOCKET_PORT = 1111;
 
 class BrowserEndpoint {
   socket: ?Socket;
@@ -442,8 +443,6 @@ class BrowserEndpoint {
     this.cleanup();
   }
 }
-
-const SOCKET_PORT = 1111;
 
 async function main() {
   if (!window.endpoint) {
