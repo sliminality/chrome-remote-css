@@ -145,7 +145,7 @@ class BrowserEndpoint {
   /**
    * Get the nodeId of the first match for the specified selector.
    */
-  async getNodeId(selector) {
+  async getNodeId(selector: string): Promise<NodeId> {
     if (!this.document) {
       this.document = await this.getDocumentRoot();
     }
@@ -157,6 +157,13 @@ class BrowserEndpoint {
         nodeId: this.document.nodeId,
       },
     });
+
+    // Chrome Debugging Protocol returns nodeId of 0
+    // if the node was not found.
+    if (!nodeId) {
+      throw new Error(`Couldn't retrieve nodeId for ${selector}`);
+    }
+
     return nodeId;
   }
 
@@ -165,33 +172,40 @@ class BrowserEndpoint {
    * to the given selector.
    * Takes a selector string or a nodeId number.
    */
-  async getNode(what, offsetParent = false): Promise<Node> {
-    const id = typeof what === 'number'
-      ? what
-      : await this.getNodeId(what);
-
+  async getNode(
+    what: NodeId | string,
+    offsetParent = false
+  ): Promise<Node> {
     if (!this.document) {
       this.document = await this.getDocumentRoot();
     }
 
+    let id: NodeId;
+    if (typeof what === 'number') {
+      // 'what' can be a NodeId or a selector.
+      id = what;
+    } else {
+      try {
+        id = await this.getNodeId(what);
+      } catch (err) {
+        throw err;
+      }
+    }
+
     /**
      * Search the cached document breadth-first for the
-     * specified node. Optionally also search for the
-     * offsetParent.
-     *
-     * wanted: Set<NodeId>
-     *   stores the nodeIds we are looking for, but haven't found.
-     *
-     * found: Map<NodeId, Node>
-     *   stores the Nodes we've found, associated with their nodeId.
+     * specified node.
+     * Optionally also search for the offsetParent.
      */
     const queue: Node[] = [ this.document ];
+    // NodeIds we are looking for, but haven't found.
     const wanted: Set<NodeId> = new Set([ id ]);
+    // Nodes we've found, associated with their nodeId.
     const found: { [NodeId]: Node } = {};
 
     // Optionally also search for the node's offsetParent.
-    let offsetParentId: ?NodeId;  // Outer scope to permit access during search.
-
+    // Outer scope to permit access during search.
+    let offsetParentId: ?NodeId;
     if (offsetParent) {
       offsetParentId = await this.getOffsetParentId(id);
       wanted.add(offsetParentId);
@@ -212,12 +226,10 @@ class BrowserEndpoint {
        * return the main node as the result.
        */
       if (wanted.size === 0) {
-        let result: Node & { offsetParent: Node } = found[id];
-
+        let result: Node = found[id];
         if (offsetParentId) {
           result.offsetParent = found[offsetParentId];
         }
-
         return result;
       }
 
