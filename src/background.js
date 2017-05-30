@@ -4,6 +4,7 @@ type Target = {
   tabId: number,
 };
 type NodeId = number;
+type NodeMap = { [NodeId]: Node };
 
 declare var io: (string, ?Object) => Socket;
 declare var ChromePromise;
@@ -17,6 +18,8 @@ class BrowserEndpoint {
   socket: ?Socket;
   target: ?Target;
   document: ?Node;
+  nodes: NodeMap;
+  styles: { [NodeId]: MatchedStyles };
   inspectedNode: ?Node;
 
   _debugEventDispatch: (Target, string, Object) => Promise<*>;
@@ -29,6 +32,8 @@ class BrowserEndpoint {
     this.target = null;
     this.document = null;
     this.inspectedNode = null;
+    this.styles = {};
+    this.nodes = {};
 
     // Bind `this` in the constructor, so we can
     // detach event handler by reference during cleanup.
@@ -136,16 +141,19 @@ class BrowserEndpoint {
   _addParentIds(parentId) {
     return node => {
       const { children, nodeId } = node;
+      let edit = { parentId };
+
       if (children && children.length) {
-        const edit = {
+        edit = {
           parentId,
           children: children.map(this._addParentIds(nodeId)),
         };
-        return Object.assign({}, node, edit);
-      } else {
-        const edit = { parentId };
-        return Object.assign({}, node, edit);
       }
+
+      // Cache the node in an object for faster indexing later.
+      const nodeWithParent = Object.assign({}, node, edit);
+      this.nodes[nodeId] = nodeWithParent;
+      return nodeWithParent;
     };
   }
 
@@ -157,13 +165,19 @@ class BrowserEndpoint {
       this.document = await this.getDocumentRoot();
     }
 
-    const { nodeId } = await this._sendDebugCommand({
-      method: 'DOM.querySelector',
-      params: {
-        selector,
-        nodeId: this.document.nodeId,
-      },
-    });
+    let nodeId: NodeId;
+    try {
+      const response = await this._sendDebugCommand({
+        method: 'DOM.querySelector',
+        params: {
+          selector,
+          nodeId: this.document.nodeId,
+        },
+      });
+      nodeId = response.nodeId;
+    } catch (err) {
+      throw err;
+    }
 
     // Chrome Debugging Protocol returns nodeId of 0
     // if the node was not found.
@@ -179,68 +193,73 @@ class BrowserEndpoint {
    * to the given selector.
    * Takes a selector string or a nodeId number.
    */
-  async getNode(
-    what: NodeId | string,
-    offsetParent = false
-  ): Promise<Node> {
-    if (!this.document) {
-      this.document = await this.getDocumentRoot();
-    }
-
+  async getNode(what: NodeId | string, offsetParent = false): Promise<Node> {
     let id: NodeId;
     if (typeof what === 'number') {
-      // 'what' can be a NodeId or a selector.
       id = what;
     } else {
       try {
         id = await this.getNodeId(what);
+      } catch (nodeIdError) {
+        throw new Error(`getNode: could not get NodeId for selector ${what}`);
+      }
+    }
+
+    let result: Node;
+
+    if (this.nodes[id]) {
+      result = this.nodes[id];
+    } else {
+      try {
+        const searchResult = await this.searchDocument([id]);
+        result = searchResult[id];
       } catch (err) {
         throw err;
       }
     }
 
-    /**
-     * Search the cached document breadth-first for the
-     * specified node.
-     * Optionally also search for the offsetParent.
-     */
+    // Optionally also search for the node's offsetParent.
+    if (offsetParent) {
+      try {
+        let offsetParentId: NodeId = await this.getOffsetParentId(id);
+        let offsetParent: Node = await this.getNode(offsetParentId);
+        result.offsetParent = offsetParent;
+      } catch (err) {
+        console.error('Error retrieving offsetParent for node', what);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Search breadth-first for a given set of nodes.
+   */
+  async searchDocument(wanted: NodeId[]): Promise<NodeMap> {
+    if (!this.document) {
+      this.document = await this.getDocumentRoot();
+    }
+
     const queue: Node[] = [ this.document ];
     // NodeIds we are looking for, but haven't found.
-    const wanted: Set<NodeId> = new Set([ id ]);
+    const missing: Set<NodeId> = new Set(wanted);
     // Nodes we've found, associated with their nodeId.
-    const found: { [NodeId]: Node } = {};
-
-    // Optionally also search for the node's offsetParent.
-    // Outer scope to permit access during search.
-    let offsetParentId: ?NodeId;
-    if (offsetParent) {
-      offsetParentId = await this.getOffsetParentId(id);
-      wanted.add(offsetParentId);
-    }
+    const found: NodeMap = {};
 
     while (queue.length > 0) {
       const node: Node = queue.shift();
       const { nodeId } = node;
 
-      if (wanted.has(nodeId)) {
+      if (missing.has(nodeId)) {
         found[nodeId] = node;
-        wanted.delete(nodeId);
+        missing.delete(nodeId);
       }
 
-      /**
-       * If `wanted` is empty, we've found everything.
-       * Attach the offsetParent to the main node, and
-       * return the main node as the result.
-       */
-      if (wanted.size === 0) {
-        let result: Node = found[id];
-        if (offsetParentId) {
-          result.offsetParent = found[offsetParentId];
-        }
-        return result;
+      // If `missing` is empty, we've found everything.
+      if (missing.size === 0) {
+        return found;
       }
 
-      // Add children to the search queue.
       if (node.children) {
         queue.push(...node.children);
       }
@@ -250,13 +269,14 @@ class BrowserEndpoint {
      * If search fails, return an Error object, which will be
      * checked by the caller and emitted back to the server.
      */
-    throw new Error(`couldn't find node matching selector: ${what}`);
+    const missingFormat: string = JSON.stringify(missing);
+    throw new Error(`couldn't find nodes for ${missingFormat}`);
   }
 
   /**
    * Get computed and matched styles for the given node.
    */
-  async getStyles(nodeId): Promise<*> {
+  async getStyles(nodeId: NodeId): Promise<*> {
     let node: Node;
     try {
       node = await this.getNode(nodeId);
@@ -283,19 +303,21 @@ class BrowserEndpoint {
       await Promise.all(commandPromises);
 
     // Turn computed style arrays into ComputedStyleObjects.
-    const toObject = (memo, current) => Object.assign(memo, {
-      [current.name]: current.value,
-    });
-    const reduceToObject = arr => arr.reduce(toObject, {});
     const [ computedStyle, parentComputedStyle ] = computedStyles
       // Extract the computed styles array from the response object.
-      .map(({ computedStyle }) => reduceToObject(computedStyle));
+      .map(({ cs }) =>
+        cs.reduce((memo, current) =>
+          Object.assign(memo, {[current.name]: current.value}),
+          {}));
 
-    return Object.assign({},
+    const styles = Object.assign({},
       matchedStyles,
       { computedStyle },
       { parentComputedStyle }
     );
+
+    this.styles[nodeId] = styles;
+    return styles;
   }
 
   /**
@@ -420,9 +442,9 @@ class BrowserEndpoint {
   /**
    * Emit data over the socket.
    */
-  _socketEmit(what: string, data: Object) {
+  _socketEmit(evtName: string, data: Object) {
     if (this.socket && this.socket.connected) {
-      this.socket.emit(what, data);
+      this.socket.emit(evtName, data);
     } else {
       console.error(`No socket connection, couldn't emit message`, data);
     }
@@ -432,6 +454,7 @@ class BrowserEndpoint {
    * Dispatch a command to the chrome.debugger API.
    */
   async _sendDebugCommand({ method, params }) {
+    console.log(method, params, this.target);
     return await cp.debugger.sendCommand(this.target, method, params);
   }
 
