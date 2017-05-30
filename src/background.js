@@ -71,10 +71,6 @@ class BrowserEndpoint {
       .addListener(this._debugEventDispatch);
     console.log('Attached debugger to target', this.target);
 
-    // Once debugger is mounted, get the DOM.
-    this.document = await this.getDocumentRoot();
-    console.log('Retrieved document root', this.document);
-
     // Once we have the DOM and are ready to handle
     // incoming requests, open the socket.
     if (this.socket) {
@@ -91,6 +87,11 @@ class BrowserEndpoint {
     } else {
       console.error('No socket found, could not setup connections');
     }
+
+    // Once debugger is mounted and sockets are open,
+    // get the DOM and push it to the server.
+    await this.getDocumentRoot();
+    console.log('Retrieved document root', this.document);
   }
 
   /**
@@ -110,6 +111,12 @@ class BrowserEndpoint {
     // Set parentId value on every node.
     const withParents = this._addParentIds(-1)(root);
     this.document = withParents;
+
+    this._socketEmit('data.update', {
+      type: 'UPDATE_DOCUMENT',
+      nodes: this.nodes,
+    });
+
     return withParents;
   }
 
@@ -459,6 +466,7 @@ class BrowserEndpoint {
   _socketEmit(evtName: string, data: Object) {
     if (this.socket && this.socket.connected) {
       this.socket.emit(evtName, data);
+      console.log(`Emitting ${evtName} to server`, data);
     } else {
       console.error(`No socket connection, couldn't emit message`, data);
     }
