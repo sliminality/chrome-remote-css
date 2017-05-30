@@ -114,51 +114,6 @@ class BrowserEndpoint {
   }
 
   /**
-   * Update all fields when the document is updated
-   * (and NodeIds change).
-   */
-  async updateDocument() {
-    /**
-     * Need to reconcile all nodes and styles.
-     * Node.backendNodeId stays constant even when Node.nodeId
-     * changes, so we can use that to resolve new nodes.
-     */
-    const { inspectedNode, styles, nodes } = this;
-    await this.getDocumentRoot();
-
-    const oldBackendNodeIds = Object.keys(styles)
-      .map(nodeId => nodes[parseInt(nodeId)].backendNodeId);
-
-    // Update inspectedNode.
-    if (inspectedNode) {
-      const oldInspected = inspectedNode.nodeId;
-      const oldInspectedBackend = nodes[oldInspected].backendNodeId;
-      oldBackendNodeIds.push(oldInspectedBackend);
-    }
-
-    let newNodeIds: NodeId[];
-    try {
-      const result = await this._sendDebugCommand({
-        method: 'DOM.pushNodesByBackendIdsToFrontend',
-        params: {
-          backendNodeIds: oldBackendNodeIds,
-        },
-      });
-      newNodeIds = result.nodeIds;
-    } catch (resolveBackendNodesErr) {
-      const backendNodeIdFormat = JSON.stringify(oldBackendNodeIds);
-      throw new Error(`Couldn't resolve backend node IDs ${backendNodeIdFormat}`);
-    }
-
-    this._socketEmit('data.update', {
-      type: 'UPDATE_DOCUMENT',
-      nodes: this.nodes,
-      rootNode: this.inspectedNode,
-      styles: this.styles,
-    });
-  }
-
-  /**
    * Allow the user to select a node for focus.
    */
   async selectNode() {
