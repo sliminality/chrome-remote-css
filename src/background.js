@@ -357,7 +357,7 @@ class BrowserEndpoint {
     // Turn computed style arrays into ComputedStyleObjects.
     const [ computedStyle, parentComputedStyle ] = computedStyles
       // Extract the computed styles array from the response object.
-      .map(({ cs }) =>
+      .map(({ computedStyle: cs }) =>
         cs.reduce((memo, current) =>
           Object.assign(memo, {[current.name]: current.value}),
           {}));
