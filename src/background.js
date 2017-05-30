@@ -112,10 +112,17 @@ class BrowserEndpoint {
       contentColor: {
         r: 255, g: 0, b: 0, a: 0.3,
       },
+      paddingColor: {
+        r: 0, g: 255, b: 0, a: 0.3,
+      },
+      marginColor: {
+        r: 0, g: 0, b: 255, a: 0.3,
+      },
     };
 
     // Launch inspect mode.
-    this._sendDebugCommand({ method: 'DOM.setInspectMode',
+    this._sendDebugCommand({
+      method: 'DOM.setInspectMode',
       params: {
         mode: 'searchForNode',
         highlightConfig,
@@ -383,12 +390,19 @@ class BrowserEndpoint {
           },
         });
         const [ inspectedNodeId ] = nodeIds;
-        this.inspectedNode = await this.getNode(inspectedNodeId);
+        const [ node, styles ] = await Promise.all([
+          this.getNode(inspectedNodeId),
+          this.getStyles(inspectedNodeId),
+        ]);
+        const data = { node, styles };
+        this.inspectedNode = node;
 
         // Send resulting node to server.
         this._socketEmit('data.update', {
-          type: 'INSPECTED_NODE',
+          type: 'UPDATE_ROOT',
           node: this.inspectedNode,
+          nodeId: inspectedNodeId,
+          styles: this.styles[inspectedNodeId],
         });
 
         // Log to debug console.
