@@ -97,13 +97,65 @@ class BrowserEndpoint {
    * Set the root of the document.
    */
   async getDocumentRoot() {
+    // Calling DOM.getDocument will invalidate all nodes.
+    this.inspectedNode = null;
+    this.styles = {};
+    this.nodes = {};
+
     const { root } = await this._sendDebugCommand({
       method: 'DOM.getDocument',
       params: { depth: -1 },
     });
+
     // Set parentId value on every node.
     const withParents = this._addParentIds(-1)(root);
+    this.document = withParents;
     return withParents;
+  }
+
+  /**
+   * Update all fields when the document is updated
+   * (and NodeIds change).
+   */
+  async updateDocument() {
+    /**
+     * Need to reconcile all nodes and styles.
+     * Node.backendNodeId stays constant even when Node.nodeId
+     * changes, so we can use that to resolve new nodes.
+     */
+    const { inspectedNode, styles, nodes } = this;
+    await this.getDocumentRoot();
+
+    const oldBackendNodeIds = Object.keys(styles)
+      .map(nodeId => nodes[parseInt(nodeId)].backendNodeId);
+
+    // Update inspectedNode.
+    if (inspectedNode) {
+      const oldInspected = inspectedNode.nodeId;
+      const oldInspectedBackend = nodes[oldInspected].backendNodeId;
+      oldBackendNodeIds.push(oldInspectedBackend);
+    }
+
+    let newNodeIds: NodeId[];
+    try {
+      const result = await this._sendDebugCommand({
+        method: 'DOM.pushNodesByBackendIdsToFrontend',
+        params: {
+          backendNodeIds: oldBackendNodeIds,
+        },
+      });
+      newNodeIds = result.nodeIds;
+    } catch (resolveBackendNodesErr) {
+      const backendNodeIdFormat = JSON.stringify(oldBackendNodeIds);
+      throw new Error(`Couldn't resolve backend node IDs ${backendNodeIdFormat}`);
+    }
+
+    this._socketEmit('data.update', {
+      type: 'UPDATE_DOCUMENT',
+      nodes: this.nodes,
+      rootNode: this.inspectedNode,
+      styles: this.styles,
+    });
   }
 
   /**
@@ -393,6 +445,13 @@ class BrowserEndpoint {
    */
   _debugEventDispatch(target: Target, method: string, params: Object) {
     const dispatch = {
+      /**
+       * Fired when the document is updated and NodeIds
+       * are no longer valid.
+       */
+      'DOM.documentUpdated': async () => {
+        this.getDocumentRoot();
+      },
       /**
        * Fired when a node is inspected after calling DOM.setInspectMode.
        * Sets this.inspectedNode to the NodeId of the clicked element.
