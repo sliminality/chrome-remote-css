@@ -5,6 +5,9 @@ type Target = {
 };
 type NodeId = number;
 type NodeMap = { [NodeId]: Node };
+type DebugStatus =
+  | 'ACTIVE'
+  | 'INACTIVE';
 
 declare var io: (string, ?Object) => Socket;
 declare var ChromePromise;
@@ -88,10 +91,33 @@ class BrowserEndpoint {
       console.error('No socket found, could not setup connections');
     }
 
+    this.updateIcon('ACTIVE');
+
     // Once debugger is mounted and sockets are open,
     // get the DOM and push it to the server.
     await this.getDocumentRoot();
     console.log('Retrieved document root', this.document);
+  }
+
+  /**
+   * Updates the browser icon badge to indicate the status
+   * of the debugging process.
+   */
+  updateIcon(status: DebugStatus) {
+    const path = {
+      ACTIVE: 'icons/icon-active-16.png',
+      INACTIVE: 'icons/icon-inactive-16.png',
+    }[status];
+
+    // When status is active, this.target will be
+    // an object containing the tabId of the debugging
+    // target.
+    // We only want to change the icon for the active tab.
+    const options = Object.assign({},
+      { path },
+      this.target && { tabId: this.target.tabId });
+
+    chrome.browserAction.setIcon(options);
   }
 
   /**
@@ -507,6 +533,7 @@ class BrowserEndpoint {
 
   _onDebuggerDetach() {
     if (this.target) {
+      this.updateIcon('INACTIVE');
       this.target = null;
       this.document = null;
       console.log('Detached from debugging target');
