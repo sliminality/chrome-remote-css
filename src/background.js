@@ -5,9 +5,7 @@ type Target = {
 };
 type NodeId = number;
 type NodeMap = { [NodeId]: Node };
-type DebugStatus =
-  | 'ACTIVE'
-  | 'INACTIVE';
+type DebugStatus = 'ACTIVE' | 'INACTIVE';
 
 declare var io: (string, ?Object) => Socket;
 declare var ChromePromise;
@@ -16,6 +14,28 @@ declare var chrome: Object;
 const cp = new ChromePromise();
 const PROTOCOL = '1.2';
 const SOCKET_PORT = 1111;
+
+// Highlighting for DOM overlays.
+const NODE_HIGHLIGHT: HighlightConfig = {
+  contentColor: {
+    r: 255,
+    g: 0,
+    b: 0,
+    a: 0.3,
+  },
+  paddingColor: {
+    r: 0,
+    g: 255,
+    b: 0,
+    a: 0.3,
+  },
+  marginColor: {
+    r: 0,
+    g: 0,
+    b: 255,
+    a: 0.3,
+  },
+};
 
 class BrowserEndpoint {
   socket: ?Socket;
@@ -68,10 +88,8 @@ class BrowserEndpoint {
     await cp.debugger.attach({ tabId }, PROTOCOL);
 
     this.target = { tabId };
-    chrome.debugger.onDetach
-      .addListener(this._onDebuggerDetach.bind(this));
-    chrome.debugger.onEvent
-      .addListener(this._debugEventDispatch);
+    chrome.debugger.onDetach.addListener(this._onDebuggerDetach.bind(this));
+    chrome.debugger.onEvent.addListener(this._debugEventDispatch);
     console.log('Attached debugger to target', this.target);
 
     // Once we have the DOM and are ready to handle
@@ -80,12 +98,12 @@ class BrowserEndpoint {
       // Need to store the value of this.socket to
       // prevent Flow from invalidating the refinement.
       const { socket } = this;
-      await (new Promise(resolve => {
+      await new Promise(resolve => {
         socket.open();
         socket.on('data.req', this.onRequest.bind(this));
         socket.on('disconnect', this._onSocketDisconnect.bind(this));
         socket.on('connect', resolve);
-      }));
+      });
       console.log('Opened socket', this.socket);
     } else {
       console.error('No socket found, could not setup connections');
@@ -113,9 +131,11 @@ class BrowserEndpoint {
     // an object containing the tabId of the debugging
     // target.
     // We only want to change the icon for the active tab.
-    const options = Object.assign({},
+    const options = Object.assign(
+      {},
       { path },
-      this.target && { tabId: this.target.tabId });
+      this.target && { tabId: this.target.tabId }
+    );
 
     chrome.browserAction.setIcon(options);
   }
@@ -150,27 +170,25 @@ class BrowserEndpoint {
    * Allow the user to select a node for focus.
    */
   async selectNode() {
-    let backendNodeId: NodeId;
-
-    // Activate inspect mode.
-    const highlightConfig: HighlightConfig = {
-      contentColor: {
-        r: 255, g: 0, b: 0, a: 0.3,
-      },
-      paddingColor: {
-        r: 0, g: 255, b: 0, a: 0.3,
-      },
-      marginColor: {
-        r: 0, g: 0, b: 255, a: 0.3,
-      },
-    };
-
     // Launch inspect mode.
     this._sendDebugCommand({
       method: 'DOM.setInspectMode',
       params: {
         mode: 'searchForNode',
-        highlightConfig,
+        highlightConfig: NODE_HIGHLIGHT,
+      },
+    });
+  }
+
+  /**
+   * Highlight a node on the inspected page.
+   */
+  async highlightNode(nodeId: NodeId): Promise<*> {
+    this._sendDebugCommand({
+      method: 'DOM.highlightNode',
+      params: {
+        highlightConfig: NODE_HIGHLIGHT,
+        nodeId,
       },
     });
   }
@@ -280,7 +298,7 @@ class BrowserEndpoint {
       this.document = await this.getDocumentRoot();
     }
 
-    const queue: Node[] = [ this.document ];
+    const queue: Node[] = [this.document];
     // NodeIds we are looking for, but haven't found.
     const missing: Set<NodeId> = new Set(wanted);
     // Nodes we've found, associated with their nodeId.
@@ -326,31 +344,39 @@ class BrowserEndpoint {
 
     const { parentId } = node;
 
-    const commands = [{
-      method: 'CSS.getMatchedStylesForNode',
-      params: { nodeId },
-    }, {
-      method: 'CSS.getComputedStyleForNode',
-      params: { nodeId },
-    }, {
-      method: 'CSS.getComputedStyleForNode',
-      params: { nodeId: parentId },
-    }];
+    const commands = [
+      {
+        method: 'CSS.getMatchedStylesForNode',
+        params: { nodeId },
+      },
+      {
+        method: 'CSS.getComputedStyleForNode',
+        params: { nodeId },
+      },
+      {
+        method: 'CSS.getComputedStyleForNode',
+        params: { nodeId: parentId },
+      },
+    ];
 
-    const commandPromises =
-      commands.map(this._sendDebugCommand.bind(this));
-    const [ matchedStyles, ...computedStyles ] =
-      await Promise.all(commandPromises);
+    const commandPromises = commands.map(this._sendDebugCommand.bind(this));
+    const [matchedStyles, ...computedStyles] = await Promise.all(
+      commandPromises
+    );
 
     // Turn computed style arrays into ComputedStyleObjects.
-    const [ computedStyle, parentComputedStyle ] = computedStyles
+    const [computedStyle, parentComputedStyle] = computedStyles
       // Extract the computed styles array from the response object.
       .map(({ computedStyle: cs }) =>
-        cs.reduce((memo, current) =>
-          Object.assign(memo, {[current.name]: current.value}),
-          {}));
+        cs.reduce(
+          (memo, current) =>
+            Object.assign(memo, { [current.name]: current.value }),
+          {}
+        )
+      );
 
-    const styles = Object.assign({},
+    const styles = Object.assign(
+      {},
       matchedStyles,
       { computedStyle },
       { parentComputedStyle }
@@ -457,8 +483,8 @@ class BrowserEndpoint {
             backendNodeIds: [backendNodeId],
           },
         });
-        const [ inspectedNodeId ] = nodeIds;
-        const [ node, styles ] = await Promise.all([
+        const [inspectedNodeId] = nodeIds;
+        const [node, styles] = await Promise.all([
           this.getNode(inspectedNodeId),
           this.getStyles(inspectedNodeId),
         ]);
@@ -483,7 +509,7 @@ class BrowserEndpoint {
     if (action) {
       action(params);
     }
-  };
+  }
 
   /**
    * Emit data over the socket.
@@ -548,8 +574,8 @@ async function main() {
   }
 
   const { id: tabId } = await BrowserEndpoint.getActiveTab();
-  const hasConnection = window.endpoint.target
-    && window.endpoint.target.tabId === tabId;
+  const hasConnection =
+    window.endpoint.target && window.endpoint.target.tabId === tabId;
 
   if (!hasConnection) {
     // Need to init connections.
