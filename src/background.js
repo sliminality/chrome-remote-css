@@ -400,31 +400,30 @@ class BrowserEndpoint {
     };
 
     const dispatch = {
-      REQUEST_NODE: async ({ selector }) =>
-        // Get offset parent
-        ({ node: await this.getNode(selector, true) }),
-      REQUEST_STYLES: ({ nodeId }) =>
-        this.getStyles(nodeId),
-      DEFAULT: ({ type }) =>
-        new Error(`unrecognized request type ${type}`),
+      REQUEST_NODE: async (
+        { selector } // Get offset parent
+      ) => ({ node: await this.getNode(selector, true) }),
+      HIGHLIGHT_NODE: async ({ nodeId }) => this.highlightNode(nodeId),
+      REQUEST_STYLES: ({ nodeId }) => this.getStyles(nodeId),
+      DEFAULT: ({ type }) => new Error(`unrecognized request type ${type}`),
     };
     const action = dispatch[req.type] || dispatch['DEFAULT'];
     const result = await action(req);
+    const responseType: ?string = responseTypes[req.type] || null;
 
     if (result instanceof Error) {
       this._socketEmit('data.err', {
         id: req.id,
-        type: responseTypes[req.type],
+        type: responseType,
         message: result.message,
       });
     } else {
-      const responseType = responseTypes[req.type];
-      const data = Object.assign({},
-        req,
-        result,
-        { type: responseType }
-      );
-      this._socketEmit('data.res', data);
+      // If the request has a result, return it.
+      // Some requests (e.g. HIGHLIGHT_NODE) do not have a response.
+      if (responseType) {
+        const data = Object.assign({}, req, result, { type: responseType });
+        this._socketEmit('data.res', data);
+      }
     }
   }
 
