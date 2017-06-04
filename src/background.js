@@ -535,7 +535,10 @@ class BrowserEndpoint {
    * Dispatch a command to the chrome.debugger API.
    */
   async _sendDebugCommand({ method, params }) {
-    console.log(method, params, this.target);
+    // Highlighting will get called frequently and clog the console.
+    if (method !== 'DOM.highlightNode' && method !== 'DOM.hideHighlight') {
+      console.log(method, params, this.target);
+    }
     return await cp.debugger.sendCommand(this.target, method, params);
   }
 
