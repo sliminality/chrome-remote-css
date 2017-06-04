@@ -182,15 +182,22 @@ class BrowserEndpoint {
 
   /**
    * Highlight a node on the inspected page.
+   * If argument is null, disable highlight.
    */
-  async highlightNode(nodeId: NodeId): Promise<*> {
-    this._sendDebugCommand({
-      method: 'DOM.highlightNode',
-      params: {
-        highlightConfig: NODE_HIGHLIGHT,
-        nodeId,
-      },
-    });
+  async highlightNode(nodeId: ?NodeId): Promise<*> {
+    if (nodeId) {
+      this._sendDebugCommand({
+        method: 'DOM.highlightNode',
+        params: {
+          highlightConfig: NODE_HIGHLIGHT,
+          nodeId,
+        },
+      });
+    } else {
+      this._sendDebugCommand({
+        method: 'DOM.hideHighlight',
+      });
+    }
   }
 
   /**
@@ -430,6 +437,7 @@ class BrowserEndpoint {
         { selector } // Get offset parent
       ) => ({ node: await this.getNode(selector, true) }),
       HIGHLIGHT_NODE: async ({ nodeId }) => this.highlightNode(nodeId),
+      HIGHLIGHT_NONE: () => this.highlightNode(null),
       REQUEST_STYLES: ({ nodeId }) => this.getStyles(nodeId),
       DEFAULT: ({ type }) => new Error(`unrecognized request type ${type}`),
     };
