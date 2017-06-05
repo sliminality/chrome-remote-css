@@ -382,6 +382,10 @@ class BrowserEndpoint {
         )
       );
 
+    // Reverse the order of the matched styles, so that the
+    // highest-specificity styles come first.
+    matchedStyles.matchedCSSRules.reverse();
+
     const styles = Object.assign(
       {},
       matchedStyles,
