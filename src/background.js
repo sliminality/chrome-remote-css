@@ -9,6 +9,7 @@ type DebugStatus = 'ACTIVE' | 'INACTIVE';
 
 declare var io: (string, ?Object) => Socket;
 declare var ChromePromise;
+declare var cssbeautify: string => string;
 declare var chrome: Object;
 
 const cp = new ChromePromise();
@@ -470,6 +471,30 @@ class BrowserEndpoint {
    */
   _debugEventDispatch(target: Target, method: string, params: Object) {
     const dispatch = {
+      /**
+       * When new stylesheets are added, reformat the text so that
+       * each property is on its own line.
+       *
+       * This will make it easier to disable/re-enable without
+       * messing up the SourceRanges of all other properties.
+       */
+      'CSS.styleSheetAdded': async ({ header }) => {
+        const { styleSheetId } = header;
+        const { text } = await window.endpoint._sendDebugCommand({
+          method: 'CSS.getStyleSheetText',
+          params: {
+            styleSheetId,
+          },
+        });
+        const formattedText = cssbeautify(text);
+        this._sendDebugCommand({
+          method: 'CSS.setStyleSheetText',
+          params: {
+            styleSheetId,
+            text: formattedText,
+          },
+        });
+      },
       /**
        * Fired when the document is updated and NodeIds
        * are no longer valid.
