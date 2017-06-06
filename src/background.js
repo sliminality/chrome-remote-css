@@ -91,6 +91,12 @@ class BrowserEndpoint {
     this.target = { tabId };
     chrome.debugger.onDetach.addListener(this._onDebuggerDetach.bind(this));
     chrome.debugger.onEvent.addListener(this._debugEventDispatch);
+    await this._sendDebugCommand({
+      method: 'DOM.enable',
+    });
+    await this._sendDebugCommand({
+      method: 'CSS.enable',
+    });
     console.log('Attached debugger to target', this.target);
 
     // Once we have the DOM and are ready to handle
