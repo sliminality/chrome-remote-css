@@ -348,7 +348,7 @@ class BrowserEndpoint {
   /**
    * Get computed and matched styles for the given node.
    */
-  async getStyles(nodeId: NodeId): Promise<*> {
+  async getStyles(nodeId: NodeId): Promise<MatchedStyles> {
     let node: Node;
     try {
       node = await this.getNode(nodeId);
@@ -402,6 +402,38 @@ class BrowserEndpoint {
 
     this.styles[nodeId] = styles;
     return styles;
+  }
+
+  /**
+   * Refresh stored styles, e.g. after a style edit has been made.
+   */
+  async refreshStyles(): Promise<> {
+    const storedNodeIds: NodeId[] = Object.keys(this.styles).map(nodeId =>
+      parseInt(nodeId)
+    );
+
+    if (storedNodeIds.length) {
+      const updatedStyles = await Promise.all(
+        storedNodeIds.map(this.getStyles.bind(this))
+      );
+
+      // Reduce the pair of arrays back into an object.
+      this.styles = updatedStyles.reduce(
+        (acc, currentStyle, i) =>
+          Object.assign(acc, {
+            [storedNodeIds[i]]: currentStyle,
+          }),
+        {}
+      );
+
+      // Push updated styles to the server.
+      this._socketEmit('data.update', {
+        type: 'UPDATE_STYLES',
+        updated: this.styles,
+      });
+    } else {
+      console.log('No styles currently stored');
+    }
   }
 
   /**
@@ -548,7 +580,11 @@ class BrowserEndpoint {
       ) => ({ node: await this.getNode(selector, true) }),
       HIGHLIGHT_NODE: async ({ nodeId }) => this.highlightNode(nodeId),
       HIGHLIGHT_NONE: () => this.highlightNode(null),
-      REQUEST_STYLES: ({ nodeId }) => this.getStyles(nodeId),
+      REQUEST_STYLES: async ({ nodeId }) => ({
+        updated: {
+          [nodeId]: await this.getStyles(nodeId),
+        },
+      }),
       DEFAULT: ({ type }) => new Error(`unrecognized request type ${type}`),
     };
     const action = dispatch[req.type] || dispatch['DEFAULT'];
