@@ -433,6 +433,105 @@ class BrowserEndpoint {
     return offsetParentNodeId;
   }
 
+  async toggleStyle(
+    nodeId: NodeId,
+    ruleIndex: number,
+    propIndex: number
+  ): Promise<> {
+    const style: CSSStyle = this.styles[nodeId].matchedCSSRules[ruleIndex].rule
+      .style;
+    const { range, styleSheetId, cssText: styleText } = style;
+    const errorMsgRange = `node ${nodeId}, rule ${ruleIndex}, property ${propIndex}`;
+
+    const property: CSSProperty = style.cssProperties[propIndex];
+    if (!property) {
+      throw new Error(`Couldn't get property for ${errorMsgRange}`);
+    }
+
+    const currentPropertyText = property.text;
+    if (!currentPropertyText) {
+      throw new Error(`Couldn't get text for property ${errorMsgRange}`);
+    }
+
+    let nextPropertyText;
+
+    const hasDisabledProperty = Object.prototype.hasOwnProperty.call(
+      property,
+      'disabled'
+    );
+    if (!hasDisabledProperty) {
+      throw new Error(
+        `Property ${errorMsgRange} appears to not be a source-based property`
+      );
+    }
+
+    const isDisabled = property.disabled;
+
+    if (isDisabled) {
+      // Need to re-enable it.
+      // /**PLY foo: bar; PLY**/ => foo: bar;
+      const disabledRegex = /\/\*\*PLY (.+) PLY\*\*\//;
+      const matches = currentPropertyText.match(disabledRegex);
+
+      if (!matches || !matches[1]) {
+        throw new Error(
+          `Property ${errorMsgRange} is marked as disabled, but disabled pattern was not found`
+        );
+      }
+
+      nextPropertyText = matches[1];
+
+      if (!nextPropertyText) {
+        throw new Error(
+          `Couldn\'t find the original text in property ${currentPropertyText}`
+        );
+      }
+    } else {
+      // Property is enabled, need to disable it.
+      nextPropertyText = `/**PLY ${currentPropertyText} PLY**/`;
+    }
+
+    // Need to replace the current *style text* by searching for
+    // the current *property text* within it, and replacing with
+    // the updated *property text*.
+    const currentStyleText = styleText;
+    if (!currentStyleText) {
+      throw new Error(
+        `Couldn't get style text for node ${nodeId}, rule ${ruleIndex}`
+      );
+    }
+
+    const nextStyleText = currentStyleText.replace(
+      currentPropertyText,
+      nextPropertyText
+    );
+
+    await this._sendDebugCommand({
+      method: 'CSS.setStyleTexts',
+      params: {
+        edits: [
+          {
+            styleSheetId,
+            range,
+            text: nextStyleText,
+          },
+        ],
+      },
+    });
+
+    /**
+     * Patch the locally-stored style.
+     * Note that MULTIPLE style objects could be potentially stale,
+     * and the caller needs to take care of refreshing the stored
+     * styles and pushing an update to the server.
+     * However, this monkeypatch will allow us to test an individual
+     * toggling change more easily.
+     */
+    style.cssText = nextStyleText;
+    property.text = nextPropertyText;
+    property.disabled = !isDisabled;
+  }
+
   /**
    * Dispatch an incoming request from the socket
    * server.
