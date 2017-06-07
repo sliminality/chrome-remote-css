@@ -407,7 +407,7 @@ class BrowserEndpoint {
   /**
    * Refresh stored styles, e.g. after a style edit has been made.
    */
-  async refreshStyles(): Promise<> {
+  async refreshStyles(): Promise<*> {
     const storedNodeIds: NodeId[] = Object.keys(this.styles).map(nodeId =>
       parseInt(nodeId)
     );
@@ -425,15 +425,11 @@ class BrowserEndpoint {
           }),
         {}
       );
-
-      // Push updated styles to the server.
-      this._socketEmit('data.update', {
-        type: 'UPDATE_STYLES',
-        updated: this.styles,
-      });
     } else {
       console.log('No styles currently stored');
     }
+
+    return this.styles;
   }
 
   /**
@@ -465,7 +461,18 @@ class BrowserEndpoint {
     return offsetParentNodeId;
   }
 
-  async toggleStyle(
+  /**
+   * Exposed handler, which toggles the style, updates the styles cache,
+   * and responds with the updated styles.
+   */
+  async toggleStyleAndRefresh({ nodeId, ruleIndex, propIndex }): Promise<{
+    [NodeId]: MatchedStyles,
+  }> {
+    await this._toggleStyle(nodeId, ruleIndex, propIndex);
+    return await this.refreshStyles();
+  }
+
+  async _toggleStyle(
     nodeId: NodeId,
     ruleIndex: number,
     propIndex: number
@@ -538,16 +545,16 @@ class BrowserEndpoint {
       nextPropertyText
     );
 
+    const edit = {
+      styleSheetId,
+      range,
+      text: nextStyleText,
+    };
+
     await this._sendDebugCommand({
       method: 'CSS.setStyleTexts',
       params: {
-        edits: [
-          {
-            styleSheetId,
-            range,
-            text: nextStyleText,
-          },
-        ],
+        edits: [edit],
       },
     });
 
@@ -572,6 +579,7 @@ class BrowserEndpoint {
     const responseTypes = {
       REQUEST_NODE: 'RECEIVE_NODE',
       REQUEST_STYLES: 'RECEIVE_STYLES',
+      TOGGLE_PROPERTY: 'RECEIVE_STYLES',
     };
 
     const dispatch = {
@@ -584,6 +592,13 @@ class BrowserEndpoint {
         updated: {
           [nodeId]: await this.getStyles(nodeId),
         },
+      }),
+      TOGGLE_PROPERTY: async ({ nodeId, ruleIndex, propIndex }) => ({
+        updated: await this.toggleStyleAndRefresh({
+          nodeId,
+          ruleIndex,
+          propIndex,
+        }),
       }),
       DEFAULT: ({ type }) => new Error(`unrecognized request type ${type}`),
     };
