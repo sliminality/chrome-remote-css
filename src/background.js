@@ -501,8 +501,8 @@ class BrowserEndpoint {
 
     if (isDisabled) {
       // Need to re-enable it.
-      // /**PLY foo: bar; PLY**/ => foo: bar;
-      const disabledRegex = /\/\*\*PLY (.+) PLY\*\*\//;
+      // /* foo: bar; */ => foo: bar;
+      const disabledRegex = /\/\*\s+(.+)\s+\*\//;
       const matches = currentPropertyText.match(disabledRegex);
 
       if (!matches || !matches[1]) {
@@ -520,7 +520,7 @@ class BrowserEndpoint {
       }
     } else {
       // Property is enabled, need to disable it.
-      nextPropertyText = `/**PLY ${currentPropertyText} PLY**/`;
+      nextPropertyText = `/* ${currentPropertyText} */`;
     }
 
     // Need to replace the current *style text* by searching for
