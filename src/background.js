@@ -527,7 +527,19 @@ class BrowserEndpoint {
       }
     } else {
       // Property is enabled, need to disable it.
-      nextPropertyText = `/* ${currentPropertyText} */`;
+      if (currentPropertyText.lastIndexOf('\n') === -1) {
+        nextPropertyText = `/* ${currentPropertyText} */`;
+      } else {
+        // If a property is last in its rule, it may have a newline
+        // at the end. Appending */ to the end would invalidate the 
+        // SourceRange for the rule.
+        const noNewLineRegex = /.+(?=\n)/m;
+        // $` gives the part before the matched substring
+        // $& gives the match
+        // $' gives the suffix
+        const replacementString = '$`/* $& */$\'';
+        nextPropertyText = currentPropertyText.replace(noNewLineRegex, replacementString);
+      }
     }
 
     // Need to replace the current *style text* by searching for
