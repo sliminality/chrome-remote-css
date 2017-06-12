@@ -923,6 +923,10 @@ class BrowserEndpoint {
         // Log to debug console.
         console.log(`Inspecting node ${inspectedNodeId}`, this.inspectedNode);
       },
+      /**
+       * Clean up when we refresh page.
+       */
+      'Page.loadEventFired': this.cleanup,
     };
 
     const action = dispatch[method];
