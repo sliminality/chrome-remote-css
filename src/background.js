@@ -716,18 +716,6 @@ class BrowserEndpoint {
     const { matchedCSSRules } = nodeStyles;
     const allPruned = [];
 
-    // Start screencasting.
-    await this._sendDebugCommand({
-      method: 'Page.startScreencast',
-    });
-
-    /**
-     * Initialize the differ with the base image.
-     * This is kind of a hack, but basically we call `toggleProperty`
-     * twice (they cancel out), and only do something with the
-     * second image (the "original webpage").
-     */
-
     // TODO: This is going to break whenever the first property
     // isn't a source property...
     const prop = {
@@ -735,10 +723,11 @@ class BrowserEndpoint {
       ruleIndex: 0,
       propIndex: 0,
     };
-    await this.getScreenshotForProperty(prop);
-    const baseShot = await this.getScreenshotForProperty(prop);
-    await this.differ.setBaseImage(baseShot);
-    chrome.tabs.create({ url: this.differ._prefixURI(baseShot) });
+    const { data: base } = await this._sendDebugCommand({
+      method: 'Page.captureScreenshot',
+    });
+    await this.differ.setBaseImage(base);
+    chrome.tabs.create({ url: this.differ._prefixURI(base) });
 
     for (const [ruleIndex, ruleMatch] of matchedCSSRules.entries()) {
       const { cssProperties } = ruleMatch.rule.style;
@@ -750,7 +739,6 @@ class BrowserEndpoint {
           ruleIndex,
           propIndex,
         };
-
         // Don't try to toggle if the property is a longhand expansion,
         // or if it's already disabled.
         const skip: boolean =
@@ -763,12 +751,9 @@ class BrowserEndpoint {
         const screenshot: string = await this.getScreenshotForProperty(
           propPath
         );
-        const diffResult = await this.differ.computeDiff(
-          screenshot,
-          {
-            // maxDiff: 0,
-          }
-        );
+        const diffResult = await this.differ.computeDiff(screenshot, {
+          maxDiff: 0,
+        });
         const pdiff: number = diffResult.pdiff;
         // If there is a nonzero difference, the property is potentially
         // relevant, so we put it back.
@@ -782,20 +767,11 @@ class BrowserEndpoint {
           // pdiff of 0 indicates pruning.
           propsRemoved.push(prop);
         }
-
-        console.log(prop.name, diffResult);
       }
-
       console.log('Pruned', propsRemoved.length, 'from rule', ruleIndex);
       allPruned.push([ruleMatch.rule.selectorList.text, propsRemoved]);
     }
-
     console.log(allPruned);
-
-    // Stop screencasting ack.
-    this._sendDebugCommand({
-      method: 'Page.stopScreencast',
-    });
   }
 
   async getScreenshotForProperty({
@@ -803,41 +779,11 @@ class BrowserEndpoint {
     ruleIndex,
     propIndex,
   }: CSSPropertyPath): Promise<string> {
-    const screenshot = await new Promise(async (resolve, reject) => {
-      // Bind a `once` listener to screencastFrame.
-      const handleFrame = (_, method, { data }) => {
-        if (method === 'Page.screencastFrame') {
-          // PRECONDITION: the property is disabled.
-          const prop = this.resolveProp({ nodeId, ruleIndex, propIndex });
-          if (!prop.disabled) {
-            console.error(
-              'Invariant violated: screenshot for',
-              prop,
-              'captured before prop was disabled'
-            );
-          }
-
-          while (!prop.disabled) {
-          }
-
-          resolve(data);
-          chrome.debugger.onEvent.removeListener(handleFrame);
-        }
-      };
-      chrome.debugger.onEvent.addListener(handleFrame);
-
-      // Now we toggle the property to trigger the screencast frame.
-      await this.toggleStyleAndRefresh({ nodeId, ruleIndex, propIndex });
+    await this.toggleStyleAndRefresh({ nodeId, ruleIndex, propIndex });
+    const { data } = await this._sendDebugCommand({
+      method: 'Page.captureScreenshot',
     });
-    return screenshot;
-  }
-
-  _initializeDiffer(_, method: string, params: { data: string }): void {
-    if (method === 'Page.screencastFrame') {
-      // Initialize the differ if it doesn't already have a base image.
-      this.differ.setBaseImage(params.data);
-    }
-    chrome.debugger.onEvent.removeListener(this._initializeDiffer);
+    return data;
   }
 
   /**
@@ -845,16 +791,6 @@ class BrowserEndpoint {
    */
   _debugEventDispatch(target: Target, method: string, params: Object) {
     const dispatch = {
-      'Page.screencastFrame': async ({ data, metadata, sessionId }) => {
-        this._sendDebugCommand({
-          method: 'Page.screencastFrameAck',
-          params: {
-            sessionId,
-          },
-        });
-
-        console.log(metadata.timestamp, 'Received frame:', sessionId);
-      },
       /**
        * When new stylesheets are added, reformat the text so that
        * each property is on its own line.
