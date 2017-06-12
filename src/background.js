@@ -5,8 +5,14 @@ type Target = {
 };
 type NodeId = number;
 type NodeMap = { [NodeId]: Node };
+type CSSPropertyPath = {
+  nodeId: NodeId,
+  ruleIndex: number,
+  propIndex: number,
+};
 type DebugStatus = 'ACTIVE' | 'INACTIVE';
 
+declare var PDiffer;
 declare var io: (string, ?Object) => Socket;
 declare var ChromePromise;
 declare var cssbeautify: string => string;
@@ -15,6 +21,8 @@ declare var chrome: Object;
 const cp = new ChromePromise();
 const PROTOCOL = '1.2';
 const SOCKET_PORT = 1111;
+
+const queue = [];
 
 // Highlighting for DOM overlays.
 const NODE_HIGHLIGHT: HighlightConfig = {
@@ -45,8 +53,10 @@ class BrowserEndpoint {
   nodes: NodeMap;
   styles: { [NodeId]: MatchedStyles };
   inspectedNode: ?Node;
+  differ: PDiffer;
 
   _debugEventDispatch: (Target, string, Object) => Promise<*>;
+  _initializeDiffer: (Object, string, Object) => Promise<*>;
 
   constructor(port) {
     this.socket = io(`http://localhost:${port}/browsers`, {
@@ -58,10 +68,12 @@ class BrowserEndpoint {
     this.inspectedNode = null;
     this.styles = {};
     this.nodes = {};
+    this.differ = new PDiffer();
 
     // Bind `this` in the constructor, so we can
     // detach event handler by reference during cleanup.
     this._debugEventDispatch = this._debugEventDispatch.bind(this);
+    this._initializeDiffer = this._initializeDiffer.bind(this);
   }
 
   /**
@@ -91,9 +103,15 @@ class BrowserEndpoint {
     this.target = { tabId };
     chrome.debugger.onDetach.addListener(this._onDebuggerDetach.bind(this));
     chrome.debugger.onEvent.addListener(this._debugEventDispatch);
-    await this._sendDebugCommand({
-      method: 'DOM.enable',
-    });
+    await Promise.all([
+      this._sendDebugCommand({
+        method: 'Page.enable',
+      }),
+      this._sendDebugCommand({
+        method: 'DOM.enable',
+      }),
+    ]);
+    // CSS requires DOM to be enabled first.
     await this._sendDebugCommand({
       method: 'CSS.enable',
     });
@@ -465,7 +483,11 @@ class BrowserEndpoint {
    * Exposed handler, which toggles the style, updates the styles cache,
    * and responds with the updated styles.
    */
-  async toggleStyleAndRefresh({ nodeId, ruleIndex, propIndex }): Promise<{
+  async toggleStyleAndRefresh({
+    nodeId,
+    ruleIndex,
+    propIndex,
+  }: CSSPropertyPath): Promise<{
     [NodeId]: MatchedStyles,
   }> {
     await this._toggleStyle(nodeId, ruleIndex, propIndex);
@@ -481,19 +503,15 @@ class BrowserEndpoint {
       .style;
     const { range, styleSheetId, cssText: styleText } = style;
     const errorMsgRange = `node ${nodeId}, rule ${ruleIndex}, property ${propIndex}`;
-
     const property: CSSProperty = style.cssProperties[propIndex];
     if (!property) {
       throw new Error(`Couldn't get property for ${errorMsgRange}`);
     }
-
     const currentPropertyText = property.text;
     if (!currentPropertyText) {
       throw new Error(`Couldn't get text for property ${errorMsgRange}`);
     }
-
     let nextPropertyText;
-
     const hasDisabledProperty = Object.prototype.hasOwnProperty.call(
       property,
       'disabled'
@@ -503,9 +521,7 @@ class BrowserEndpoint {
         `Property ${errorMsgRange} appears to not be a source-based property`
       );
     }
-
     const isDisabled = property.disabled;
-
     if (isDisabled) {
       // Need to re-enable it.
       // /* foo: bar; */ => foo: bar;
@@ -517,9 +533,7 @@ class BrowserEndpoint {
           `Property ${errorMsgRange} is marked as disabled, but disabled pattern was not found`
         );
       }
-
       nextPropertyText = matches[1];
-
       if (!nextPropertyText) {
         throw new Error(
           `Couldn\'t find the original text in property ${currentPropertyText}`
@@ -531,14 +545,17 @@ class BrowserEndpoint {
         nextPropertyText = `/* ${currentPropertyText} */`;
       } else {
         // If a property is last in its rule, it may have a newline
-        // at the end. Appending */ to the end would invalidate the 
+        // at the end. Appending */ to the end would invalidate the
         // SourceRange for the rule.
         const noNewLineRegex = /.+(?=\n)/m;
         // $` gives the part before the matched substring
         // $& gives the match
         // $' gives the suffix
-        const replacementString = '$`/* $& */$\'';
-        nextPropertyText = currentPropertyText.replace(noNewLineRegex, replacementString);
+        const replacementString = "$`/* $& */$'";
+        nextPropertyText = currentPropertyText.replace(
+          noNewLineRegex,
+          replacementString
+        );
       }
     }
 
@@ -551,18 +568,15 @@ class BrowserEndpoint {
         `Couldn't get style text for node ${nodeId}, rule ${ruleIndex}`
       );
     }
-
     const nextStyleText = currentStyleText.replace(
       currentPropertyText,
       nextPropertyText
     );
-
     const edit = {
       styleSheetId,
       range,
       text: nextStyleText,
     };
-
     await this._sendDebugCommand({
       method: 'CSS.setStyleTexts',
       params: {
@@ -583,6 +597,58 @@ class BrowserEndpoint {
     property.disabled = !isDisabled;
   }
 
+  isDisabled(path: CSSPropertyPath): boolean {
+    let prop: ?CSSProperty;
+    try {
+      prop = this.resolveProp(path);
+    } catch (propNotFoundErr) {
+      return false;
+    }
+    return !!prop.disabled;
+  }
+
+  /**
+   * Longhand properties that are expansions of shorthand properties
+   * will not have their own SourceRanges or property text.
+   */
+  isDeclaredProperty(path: CSSPropertyPath): boolean {
+    let prop: ?CSSProperty;
+    try {
+      prop = this.resolveProp(path);
+    } catch (propNotFoundErr) {
+      return false;
+    }
+    const hasText = !!prop.text;
+    const hasRange = !!prop.range;
+    return hasText && hasRange;
+  }
+
+  resolveProp(path: CSSPropertyPath): CSSProperty {
+    if (!this.propExists(path)) {
+      console.log(path);
+      throw new Error(`resolveProp: property does not exist`);
+    }
+    const { nodeId, ruleIndex, propIndex } = path;
+    return this.styles[nodeId].matchedCSSRules[ruleIndex].rule.style
+      .cssProperties[propIndex];
+  }
+
+  propExists({ nodeId, ruleIndex, propIndex }: CSSPropertyPath): boolean {
+    const nodeStyles: MatchedStyles = this.styles[nodeId];
+    if (!nodeStyles) {
+      return false;
+    }
+    const ruleMatch: RuleMatch = nodeStyles.matchedCSSRules[ruleIndex];
+    if (!ruleMatch) {
+      return false;
+    }
+    const prop: CSSProperty = ruleMatch.rule.style.cssProperties[propIndex];
+    if (!prop) {
+      return false;
+    }
+    return true;
+  }
+
   /**
    * Dispatch an incoming request from the socket
    * server.
@@ -592,6 +658,7 @@ class BrowserEndpoint {
       REQUEST_NODE: 'RECEIVE_NODE',
       REQUEST_STYLES: 'RECEIVE_STYLES',
       TOGGLE_PROPERTY: 'RECEIVE_STYLES',
+      PRUNE_STYLES: 'RECEIVE_STYLES',
     };
 
     const dispatch = {
@@ -612,6 +679,12 @@ class BrowserEndpoint {
           propIndex,
         }),
       }),
+      PRUNE_STYLES: async ({ nodeId }) => {
+        await this.prune(nodeId);
+        return {
+          updated: await this.refreshStyles(),
+        };
+      },
       DEFAULT: ({ type }) => new Error(`unrecognized request type ${type}`),
     };
     const action = dispatch[req.type] || dispatch['DEFAULT'];
@@ -635,10 +708,153 @@ class BrowserEndpoint {
   }
 
   /**
+   * Prune properties for some node.
+   */
+  async prune(nodeId: NodeId): Promise<> {
+    // Get current styles for the node.
+    const nodeStyles: MatchedStyles = await this.getStyles(nodeId);
+    const { matchedCSSRules } = nodeStyles;
+    const allPruned = [];
+
+    // Start screencasting.
+    await this._sendDebugCommand({
+      method: 'Page.startScreencast',
+    });
+
+    /**
+     * Initialize the differ with the base image.
+     * This is kind of a hack, but basically we call `toggleProperty`
+     * twice (they cancel out), and only do something with the
+     * second image (the "original webpage").
+     */
+
+    // TODO: This is going to break whenever the first property
+    // isn't a source property...
+    const prop = {
+      nodeId,
+      ruleIndex: 0,
+      propIndex: 0,
+    };
+    await this.getScreenshotForProperty(prop);
+    const baseShot = await this.getScreenshotForProperty(prop);
+    await this.differ.setBaseImage(baseShot);
+    chrome.tabs.create({ url: this.differ._prefixURI(baseShot) });
+
+    for (const [ruleIndex, ruleMatch] of matchedCSSRules.entries()) {
+      const { cssProperties } = ruleMatch.rule.style;
+      let propsRemoved: CSSProperty[] = [];
+
+      for (const [propIndex, prop] of cssProperties.entries()) {
+        const propPath: CSSPropertyPath = {
+          nodeId,
+          ruleIndex,
+          propIndex,
+        };
+
+        // Don't try to toggle if the property is a longhand expansion,
+        // or if it's already disabled.
+        const skip: boolean =
+          !this.isDeclaredProperty(propPath) || this.isDisabled(propPath);
+        if (skip) {
+          continue;
+        }
+
+        console.log('Testing property', prop.name);
+        const screenshot: string = await this.getScreenshotForProperty(
+          propPath
+        );
+        const diffResult = await this.differ.computeDiff(
+          screenshot,
+          {
+            // maxDiff: 0,
+          }
+        );
+        const pdiff: number = diffResult.pdiff;
+        // If there is a nonzero difference, the property is potentially
+        // relevant, so we put it back.
+        if (pdiff > 0) {
+          try {
+            await this.toggleStyleAndRefresh({ nodeId, ruleIndex, propIndex });
+          } catch (toggleStyleError) {
+            console.error(toggleStyleError);
+          }
+        } else {
+          // pdiff of 0 indicates pruning.
+          propsRemoved.push(prop);
+        }
+
+        console.log(prop.name, diffResult);
+      }
+
+      console.log('Pruned', propsRemoved.length, 'from rule', ruleIndex);
+      allPruned.push([ruleMatch.rule.selectorList.text, propsRemoved]);
+    }
+
+    console.log(allPruned);
+
+    // Stop screencasting ack.
+    this._sendDebugCommand({
+      method: 'Page.stopScreencast',
+    });
+  }
+
+  async getScreenshotForProperty({
+    nodeId,
+    ruleIndex,
+    propIndex,
+  }: CSSPropertyPath): Promise<string> {
+    const screenshot = await new Promise(async (resolve, reject) => {
+      // Bind a `once` listener to screencastFrame.
+      const handleFrame = (_, method, { data }) => {
+        if (method === 'Page.screencastFrame') {
+          // PRECONDITION: the property is disabled.
+          const prop = this.resolveProp({ nodeId, ruleIndex, propIndex });
+          if (!prop.disabled) {
+            console.error(
+              'Invariant violated: screenshot for',
+              prop,
+              'captured before prop was disabled'
+            );
+          }
+
+          while (!prop.disabled) {
+          }
+
+          resolve(data);
+          chrome.debugger.onEvent.removeListener(handleFrame);
+        }
+      };
+      chrome.debugger.onEvent.addListener(handleFrame);
+
+      // Now we toggle the property to trigger the screencast frame.
+      await this.toggleStyleAndRefresh({ nodeId, ruleIndex, propIndex });
+    });
+    return screenshot;
+  }
+
+  _initializeDiffer(_, method: string, params: { data: string }): void {
+    if (method === 'Page.screencastFrame') {
+      // Initialize the differ if it doesn't already have a base image.
+      this.differ.setBaseImage(params.data);
+    }
+    chrome.debugger.onEvent.removeListener(this._initializeDiffer);
+  }
+
+  /**
    * Handle certain events from the debugger.
    */
   _debugEventDispatch(target: Target, method: string, params: Object) {
     const dispatch = {
+      'Page.screencastFrame': async ({ data, metadata, sessionId }) => {
+        this._sendDebugCommand({
+          method: 'Page.screencastFrameAck',
+          params: {
+            sessionId,
+          },
+        });
+
+        console.log(metadata.timestamp, 'Received frame:', sessionId);
+      },
       /**
        * When new stylesheets are added, reformat the text so that
        * each property is on its own line.
@@ -761,7 +977,7 @@ class BrowserEndpoint {
       this.socket = null;
     }
     console.log('Disconnected from socket');
-    this.cleanup();
+    // this.cleanup();
   }
 
   _onDebuggerDetach() {
