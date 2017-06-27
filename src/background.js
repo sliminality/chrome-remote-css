@@ -56,7 +56,6 @@ class BrowserEndpoint {
   differ: PDiffer;
 
   _debugEventDispatch: (Target, string, Object) => Promise<*>;
-  _initializeDiffer: (Object, string, Object) => Promise<*>;
 
   constructor(port) {
     this.socket = io(`http://localhost:${port}/browsers`, {
@@ -73,7 +72,6 @@ class BrowserEndpoint {
     // Bind `this` in the constructor, so we can
     // detach event handler by reference during cleanup.
     this._debugEventDispatch = this._debugEventDispatch.bind(this);
-    this._initializeDiffer = this._initializeDiffer.bind(this);
   }
 
   /**
@@ -727,7 +725,6 @@ class BrowserEndpoint {
       method: 'Page.captureScreenshot',
     });
     await this.differ.setBaseImage(base);
-    chrome.tabs.create({ url: this.differ._prefixURI(base) });
 
     for (const [ruleIndex, ruleMatch] of matchedCSSRules.entries()) {
       const { cssProperties } = ruleMatch.rule.style;
