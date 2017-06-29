@@ -22,8 +22,6 @@ const cp = new ChromePromise();
 const PROTOCOL = '1.2';
 const SOCKET_PORT = 1111;
 
-const queue = [];
-
 // Highlighting for DOM overlays.
 const NODE_HIGHLIGHT: HighlightConfig = {
   contentColor: {
