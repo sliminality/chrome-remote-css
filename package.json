@@ -8,14 +8,20 @@
   "license": "MIT",
   "devDependencies": {
     "flow-bin": "^0.47.0",
-    "flow-remove-types": "^1.2.1"
+    "html-webpack-plugin": "^2.29.0",
+    "remove-flow-types-loader": "^1.0.0",
+    "webpack": "^3.0.0"
   },
   "scripts": {
-    "build": "flow-remove-types src/ -d ."
+    "build": "webpack --env",
+    "build:watch": "webpack --env.dev"
   },
   "dependencies": {
     "chrome-promise": "^2.0.3",
     "cssbeautify": "^0.3.1",
-    "socket.io-client": "^2.0.2"
+    "devtools-typed": "https://github.com/sarahlim/devtools-typed",
+    "pixelmatch": "https://github.com/sarahlim/pixelmatch.git#be54caf11a5",
+    "socket.io-client": "^2.0.2",
+    "webpack-chrome-extension-reloader": "^0.4.0"
   }
 }

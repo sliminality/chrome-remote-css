@@ -1,9 +1,18 @@
 // @flow
+import ChromePromise from 'chrome-promise';
+import cssbeautify from 'cssbeautify';
+import io from 'socket.io-client';
+
+import PDiffer from './pdiffer';
+
+import type { HighlightConfig } from 'devtools-typed/domain/overlay';
+import type { NodeId } from 'devtools-typed/domain/dom';
+import type { CSSStyle, CSSProperty, RuleMatch } from 'devtools-typed/domain/css';
+
 type Socket = Object;
 type Target = {
   tabId: number,
 };
-type NodeId = number;
 type NodeMap = { [NodeId]: Node };
 type CSSPropertyPath = {
   nodeId: NodeId,
@@ -12,10 +21,6 @@ type CSSPropertyPath = {
 };
 type DebugStatus = 'ACTIVE' | 'INACTIVE';
 
-declare var PDiffer;
-declare var io: (string, ?Object) => Socket;
-declare var ChromePromise;
-declare var cssbeautify: string => string;
 declare var chrome: Object;
 
 const cp = new ChromePromise();
@@ -144,8 +149,8 @@ class BrowserEndpoint {
    */
   updateIcon(status: DebugStatus) {
     const path = {
-      ACTIVE: 'icons/icon-active-16.png',
-      INACTIVE: 'icons/icon-inactive-16.png',
+      ACTIVE: '../icons/icon-active-16.png',
+      INACTIVE: '../icons/icon-inactive-16.png',
     }[status];
 
     // When status is active, this.target will be

@@ -2,12 +2,12 @@
   "manifest_version": 2,
   "name": "chrome-remote-css",
   "description": "expose DOM and CSSOM on a webpage over a socket.io connection",
-  "version": "0.01",
+  "version": "0.1",
   "browser_action": {
-    "default_icon": "icons/icon-inactive-16.png"
+    "default_icon": "./icons/icon-inactive-16.png"
   },
   "background": {
-    "page": "background.html"
+    "page": "./build/background.html"
   },
   "content_security_policy": "script-src 'self' https://unpkg.com; object-src 'self'",
   "permissions": [

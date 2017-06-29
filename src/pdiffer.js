@@ -1,10 +1,7 @@
 // @flow
-type Base64String = string;
+import pixelmatch from 'pixelmatch';
 
-type PixelmatchOptions = {
-  threshold?: number,
-  maxDiff?: number,
-};
+type Base64String = string;
 
 type DiffOptions = {
   writeDiff?: boolean,
@@ -15,15 +12,6 @@ type DiffResult = {
   maxDiff?: number,
   context?: CanvasRenderingContext2D,
 };
-
-declare var pixelmatch: ({
-  img1: Uint8ClampedArray,
-  img2: Uint8ClampedArray,
-  diff: ?Uint8ClampedArray,
-  height: number,
-  width: number,
-  options?: PixelmatchOptions,
-}) => number;
 
 class PDiffer {
   width: ?number;
@@ -158,3 +146,5 @@ class PDiffer {
     return result;
   }
 }
+
+export default PDiffer;
