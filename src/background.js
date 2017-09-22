@@ -7,7 +7,11 @@ import PDiffer from './pdiffer';
 
 import type { HighlightConfig } from 'devtools-typed/domain/overlay';
 import type { NodeId } from 'devtools-typed/domain/dom';
-import type { CSSStyle, CSSProperty, RuleMatch } from 'devtools-typed/domain/css';
+import type {
+  CSSStyle,
+  CSSProperty,
+  RuleMatch,
+} from 'devtools-typed/domain/css';
 
 type Socket = Object;
 type Target = {
@@ -112,10 +116,15 @@ class BrowserEndpoint {
         method: 'DOM.enable',
       }),
     ]);
-    // CSS requires DOM to be enabled first.
-    await this._sendDebugCommand({
-      method: 'CSS.enable',
-    });
+    // These domains require DOM to be enabled first.
+    await Promise.all([
+      this._sendDebugCommand({
+        method: 'CSS.enable',
+      }),
+      this._sendDebugCommand({
+        method: 'Overlay.enable',
+      }),
+    ]);
     console.log('Attached debugger to target', this.target);
 
     // Once we have the DOM and are ready to handle
@@ -198,7 +207,7 @@ class BrowserEndpoint {
   async selectNode() {
     // Launch inspect mode.
     this._sendDebugCommand({
-      method: 'DOM.setInspectMode',
+      method: 'Overlay.setInspectMode',
       params: {
         mode: 'searchForNode',
         highlightConfig: NODE_HIGHLIGHT,
@@ -459,7 +468,7 @@ class BrowserEndpoint {
     // "inspected" node, so we can use $0 in our
     // evaluation.
     await this._sendDebugCommand({
-      method: 'DOM.setInspectedNode',
+      method: 'Overlay.setInspectedNode',
       params: { nodeId },
     });
 
@@ -826,10 +835,10 @@ class BrowserEndpoint {
        * Fired when a node is inspected after calling DOM.setInspectMode.
        * Sets this.inspectedNode to the NodeId of the clicked element.
        */
-      'DOM.inspectNodeRequested': async ({ backendNodeId }) => {
+      'Overlay.inspectNodeRequested': async ({ backendNodeId }) => {
         // Disable inspection mode.
         window.endpoint._sendDebugCommand({
-          method: 'DOM.setInspectMode',
+          method: 'Overlay.setInspectMode',
           params: { mode: 'none' },
         });
 
