@@ -2,11 +2,10 @@
 import ChromePromise from 'chrome-promise';
 import cssbeautify from 'cssbeautify';
 import io from 'socket.io-client';
-
-import PDiffer from './pdiffer';
+import pdiff from './pdiff';
 
 import type { HighlightConfig } from 'devtools-typed/domain/overlay';
-import type { NodeId } from 'devtools-typed/domain/dom';
+import type { NodeId, Node } from 'devtools-typed/domain/dom';
 import type {
   CSSStyle,
   CSSProperty,
@@ -60,7 +59,6 @@ class BrowserEndpoint {
   nodes: NodeMap;
   styles: { [NodeId]: MatchedStyles };
   inspectedNode: ?Node;
-  differ: PDiffer;
 
   _debugEventDispatch: (Target, string, Object) => Promise<*>;
 
@@ -74,7 +72,6 @@ class BrowserEndpoint {
     this.inspectedNode = null;
     this.styles = {};
     this.nodes = {};
-    this.differ = new PDiffer();
 
     // Bind `this` in the constructor, so we can
     // detach event handler by reference during cleanup.
@@ -635,8 +632,9 @@ class BrowserEndpoint {
 
   resolveProp(path: CSSPropertyPath): CSSProperty {
     if (!this.propExists(path)) {
-      console.log(path);
-      throw new Error(`resolveProp: property does not exist`);
+      throw new Error(
+        `resolveProp: property ${path.nodeId}:${path.ruleIndex}:${path.propIndex} does not exist`
+      );
     }
     const { nodeId, ruleIndex, propIndex } = path;
     return this.styles[nodeId].matchedCSSRules[ruleIndex].rule.style
@@ -726,17 +724,10 @@ class BrowserEndpoint {
     const { matchedCSSRules } = nodeStyles;
     const allPruned = [];
 
-    // TODO: This is going to break whenever the first property
-    // isn't a source property...
-    const prop = {
-      nodeId,
-      ruleIndex: 0,
-      propIndex: 0,
-    };
     const { data: base } = await this._sendDebugCommand({
       method: 'Page.captureScreenshot',
     });
-    await this.differ.setBaseImage(base);
+    const pdiffAgainstBase = await pdiff(base, { maxDiff: 0 });
 
     for (const [ruleIndex, ruleMatch] of matchedCSSRules.entries()) {
       const { cssProperties } = ruleMatch.rule.style;
@@ -750,34 +741,30 @@ class BrowserEndpoint {
         };
         // Don't try to toggle if the property is a longhand expansion,
         // or if it's already disabled.
-        const skip: boolean =
+        const skip =
           !this.isDeclaredProperty(propPath) || this.isDisabled(propPath);
         if (skip) {
           continue;
         }
 
-        console.log('Testing property', prop.name);
         const screenshot: string = await this.getScreenshotForProperty(
           propPath
         );
-        const diffResult = await this.differ.computeDiff(screenshot, {
-          maxDiff: 0,
-        });
-        const pdiff: number = diffResult.pdiff;
+        const result = await pdiffAgainstBase(screenshot);
+        const { numPixelsDifferent } = result;
         // If there is a nonzero difference, the property is potentially
         // relevant, so we put it back.
-        if (pdiff > 0) {
+        if (numPixelsDifferent > 0) {
           try {
             await this.toggleStyleAndRefresh({ nodeId, ruleIndex, propIndex });
           } catch (toggleStyleError) {
             console.error(toggleStyleError);
           }
         } else {
-          // pdiff of 0 indicates pruning.
+          // If 0 pixels were different, we prune the prop.
           propsRemoved.push(prop);
         }
       }
-      console.log('Pruned', propsRemoved.length, 'from rule', ruleIndex);
       allPruned.push([ruleMatch.rule.selectorList.text, propsRemoved]);
     }
     console.log(allPruned);
