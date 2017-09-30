@@ -75,7 +75,7 @@ async function pdiff(before64: Base64String, options: DiffOptions = {}) {
 
 function resolveDiffOptions(
   given?: DiffOptions = {}
-): {
+): PixelmatchOptions & {
   writeDiff: boolean,
 } {
   // By default, we don't specify either a threshold or maxDiff,

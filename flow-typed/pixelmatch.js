@@ -1,7 +1,7 @@
 // @flow
 
 declare module 'pixelmatch' {
-  declare type PixelmatchOptions = {
+  declare export type PixelmatchOptions = {
     threshold?: number,
     maxDiff?: number,
   };
@@ -15,5 +15,5 @@ declare module 'pixelmatch' {
     options?: PixelmatchOptions,
   };
 
-  declare export function pixelmatch(input: PixelmatchInput): number;
+  declare export default function pixelmatch(input: PixelmatchInput): number;
 }
