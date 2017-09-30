@@ -543,7 +543,7 @@ class BrowserEndpoint {
       nextPropertyText = matches[1];
       if (!nextPropertyText) {
         throw new Error(
-          `Couldn\'t find the original text in property ${currentPropertyText}`
+          `Couldn't find the original text in property ${currentPropertyText}`
         );
       }
     } else {
@@ -837,11 +837,7 @@ class BrowserEndpoint {
           },
         });
         const [inspectedNodeId] = nodeIds;
-        const [node, styles] = await Promise.all([
-          this.getNode(inspectedNodeId),
-          this.getStyles(inspectedNodeId),
-        ]);
-        const data = { node, styles };
+        const node = await this.getNode(inspectedNodeId);
         this.inspectedNode = node;
 
         // Send resulting node to server.

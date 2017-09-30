@@ -7,6 +7,9 @@
   "author": "Sarah Lim <sarah@sarahlim.com>",
   "license": "MIT",
   "devDependencies": {
+    "babel-eslint": "^8.0.1",
+    "eslint": "^4.8.0",
+    "eslint-plugin-flowtype": "^2.37.0",
     "flow-bin": "^0.47.0",
     "html-webpack-plugin": "^2.29.0",
     "remove-flow-types-loader": "^1.0.0",
@@ -14,7 +17,8 @@
   },
   "scripts": {
     "build": "webpack --env",
-    "build:watch": "webpack --env.dev"
+    "build:watch": "webpack --env.dev",
+    "lint": "eslint ."
   },
   "dependencies": {
     "chrome-promise": "^2.0.3",
