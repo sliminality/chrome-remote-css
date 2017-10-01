@@ -13,4 +13,11 @@ function showImage(b64: Base64String) {
   createTab(uri);
 }
 
-export { showImage };
+function assert(condition: boolean, message: string) {
+  // TODO(slim): Eventually check for dev vs. prod environment.
+  if (!condition) {
+    throw new Error(`Assertion failed: ${message}`);
+  }
+}
+
+export { showImage, assert };

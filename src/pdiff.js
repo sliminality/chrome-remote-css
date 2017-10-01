@@ -1,6 +1,6 @@
 // @flow
 import pixelmatch from 'pixelmatch';
-import assert from './assert';
+import {assert} from './utils';
 
 import type { PixelmatchOptions } from 'pixelmatch';
 
