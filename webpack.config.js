@@ -19,7 +19,8 @@ const baseConfig = {
     rules: [
       {
         test: /\.js$/,
-        use: 'remove-flow-types-loader',
+        exclude: /node_modules/,
+        loader: 'babel-loader',
         include: path.join(__dirname, 'src'),
       },
     ],
@@ -30,14 +31,10 @@ const baseConfig = {
 
 const devConfig = {
   devtool: 'inline-source-map',
-  plugins: [
-    new ChromeExtensionReloader(),
-  ],
+  plugins: [new ChromeExtensionReloader()],
   watch: true,
 };
 
-module.exports = function (env) {
-  return env.dev
-    ? Object.assign(baseConfig, devConfig)
-    : baseConfig;
-}
+module.exports = function(env) {
+  return env.dev ? Object.assign(baseConfig, devConfig) : baseConfig;
+};

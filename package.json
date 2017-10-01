@@ -7,20 +7,45 @@
   "author": "Sarah Lim <sarah@sarahlim.com>",
   "license": "MIT",
   "devDependencies": {
+    "ava": "^0.22.0",
+    "babel-core": "^6.26.0",
     "babel-eslint": "^8.0.1",
+    "babel-loader": "^7.1.2",
+    "babel-plugin-transform-runtime": "^6.23.0",
+    "babel-preset-env": "^1.6.0",
+    "babel-preset-flow": "^6.23.0",
+    "browser-env": "^3.2.0",
+    "canvas-prebuilt": "^1.6.5-prerelease.1",
     "eslint": "^4.8.0",
     "eslint-plugin-flowtype": "^2.37.0",
     "flow-bin": "^0.47.0",
     "html-webpack-plugin": "^2.29.0",
-    "remove-flow-types-loader": "^1.0.0",
     "webpack": "^3.0.0"
+  },
+  "ava": {
+    "require": [
+      "babel-register",
+      "./test/helpers/setup.js"
+    ],
+    "babel": "inherit"
+  },
+  "babel": {
+    "presets": [
+      "env",
+      "flow"
+    ],
+    "plugins": [
+      "transform-runtime"
+    ]
   },
   "scripts": {
     "build": "webpack --env",
     "build:watch": "webpack --env.dev",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "ava"
   },
   "dependencies": {
+    "babel-runtime": "^6.26.0",
     "chrome-promise": "^2.0.3",
     "cssbeautify": "^0.3.1",
     "devtools-typed": "https://github.com/sarahlim/devtools-typed",
