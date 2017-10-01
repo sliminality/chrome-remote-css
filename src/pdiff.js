@@ -132,4 +132,4 @@ function prefixURI(uri: Base64String): Base64String {
 }
 
 export default pdiff;
-export { prefixURI };
+export { prefixURI, getImageData };
