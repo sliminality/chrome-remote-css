@@ -11,11 +11,13 @@
     "babel-core": "^6.26.0",
     "babel-eslint": "^8.0.1",
     "babel-loader": "^7.1.2",
+    "babel-plugin-transform-class-properties": "^6.24.1",
     "babel-plugin-transform-runtime": "^6.23.0",
     "babel-preset-env": "^1.6.0",
     "babel-preset-flow": "^6.23.0",
     "browser-env": "^3.2.0",
     "canvas-prebuilt": "^1.6.5-prerelease.1",
+    "devtools-typed": "https://github.com/sarahlim/devtools-typed",
     "eslint": "^4.8.0",
     "eslint-plugin-flowtype": "^2.37.0",
     "flow-bin": "^0.47.0",
@@ -35,7 +37,8 @@
       "flow"
     ],
     "plugins": [
-      "transform-runtime"
+      "transform-runtime",
+      "transform-class-properties"
     ]
   },
   "scripts": {
@@ -48,7 +51,7 @@
     "babel-runtime": "^6.26.0",
     "chrome-promise": "^2.0.3",
     "cssbeautify": "^0.3.1",
-    "devtools-typed": "https://github.com/sarahlim/devtools-typed",
+    "normalizr": "^3.2.4",
     "pixelmatch": "https://github.com/sarahlim/pixelmatch.git#be54caf11a5",
     "socket.io-client": "^2.0.2",
     "webpack-chrome-extension-reloader": "^0.4.0"
