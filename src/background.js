@@ -1,8 +1,13 @@
-// @flow
+// @flow @format
 import ChromePromise from 'chrome-promise';
 import cssbeautify from 'cssbeautify';
 import io from 'socket.io-client';
 import pdiff from './pdiff';
+import {
+  serverToClient as outgoing,
+  clientToServer as incoming,
+} from './socket/messageTypes';
+import normalizeNodes from './normalize';
 
 import type { HighlightConfig } from 'devtools-typed/domain/overlay';
 import type { NodeId, Node } from 'devtools-typed/domain/dom';
@@ -59,6 +64,7 @@ class BrowserEndpoint {
   nodes: NodeMap;
   styles: { [NodeId]: MatchedStyles };
   inspectedNode: ?Node;
+  entities: { nodes: NormalizedNodeMap };
 
   _debugEventDispatch: (Target, string, Object) => Promise<*>;
 
@@ -132,9 +138,37 @@ class BrowserEndpoint {
       const { socket } = this;
       await new Promise(resolve => {
         socket.open();
-        socket.on('data.req', this.onRequest.bind(this));
         socket.on('disconnect', this._onSocketDisconnect.bind(this));
+        socket.on('connect', () => {
+          if (this.entities) {
+            this._socketEmit(outgoing.SET_DOCUMENT, {
+              entities: this.entities,
+            });
+          }
+          if (this.styles) {
+            this._socketEmit(outgoing.SET_STYLES, {
+              styles: this.styles,
+            });
+          }
+          if (this.inspectedNode) {
+            this._socketEmit(outgoing.SET_INSPECTION_ROOT, {
+              nodeId: this.inspectedNode.nodeId,
+            });
+          }
+        });
         socket.on('connect', resolve);
+
+        socket.on(incoming.PRUNE_NODE, this.pruneNode.bind(this));
+        socket.on(incoming.CLEAR_HIGHLIGHT, this.clearHighlight.bind(this));
+        socket.on(incoming.HIGHLIGHT_NODE, this.highlightNode.bind(this));
+        socket.on(
+          incoming.REQUEST_STYLE_FOR_NODE,
+          this.requestStyleForNode.bind(this),
+        );
+        socket.on(
+          incoming.TOGGLE_CSS_PROPERTY,
+          this.toggleCSSProperty.bind(this),
+        );
       });
       console.log('Opened socket', this.socket);
     } else {
@@ -166,7 +200,7 @@ class BrowserEndpoint {
     const options = Object.assign(
       {},
       { path },
-      this.target && { tabId: this.target.tabId }
+      this.target && { tabId: this.target.tabId },
     );
 
     chrome.browserAction.setIcon(options);
@@ -190,9 +224,10 @@ class BrowserEndpoint {
     const withParents = this._addParentIds(-1)(root);
     this.document = withParents;
 
-    this._socketEmit('data.update', {
-      type: 'UPDATE_DOCUMENT',
-      nodes: this.nodes,
+    const { entities } = normalizeNodes(withParents);
+    this.entities = entities;
+    this._socketEmit(outgoing.SET_DOCUMENT, {
+      entities,
     });
 
     return withParents;
@@ -216,20 +251,20 @@ class BrowserEndpoint {
    * Highlight a node on the inspected page.
    * If argument is null, disable highlight.
    */
-  async highlightNode(nodeId: ?NodeId): Promise<*> {
-    if (nodeId) {
-      this._sendDebugCommand({
-        method: 'DOM.highlightNode',
-        params: {
-          highlightConfig: NODE_HIGHLIGHT,
-          nodeId,
-        },
-      });
-    } else {
-      this._sendDebugCommand({
-        method: 'DOM.hideHighlight',
-      });
-    }
+  async highlightNode({ nodeId }: { nodeId: CRDP$NodeId }) {
+    this._sendDebugCommand({
+      method: 'DOM.highlightNode',
+      params: {
+        highlightConfig: NODE_HIGHLIGHT,
+        nodeId,
+      },
+    });
+  }
+
+  async clearHighlight() {
+    await this._sendDebugCommand({
+      method: 'DOM.hideHighlight',
+    });
   }
 
   /**
@@ -285,31 +320,15 @@ class BrowserEndpoint {
     return nodeId;
   }
 
-  /**
-   * Get the DOM subtree for the node corresponding
-   * to the given selector.
-   * Takes a selector string or a nodeId number.
-   */
-  async getNode(what: NodeId | string, offsetParent = false): Promise<Node> {
-    let id: NodeId;
-    if (typeof what === 'number') {
-      id = what;
-    } else {
-      try {
-        id = await this.getNodeId(what);
-      } catch (nodeIdError) {
-        throw new Error(`getNode: could not get NodeId for selector ${what}`);
-      }
-    }
-
+  async getNodeById(nodeId: NodeId, offsetParent = false): Promise<Node> {
     let result: Node;
 
-    if (this.nodes[id]) {
-      result = this.nodes[id];
+    if (this.nodes[nodeId]) {
+      result = this.nodes[nodeId];
     } else {
       try {
-        const searchResult = await this.searchDocument([id]);
-        result = searchResult[id];
+        const searchResult = await this.searchDocument([nodeId]);
+        result = searchResult[nodeId];
       } catch (err) {
         throw err;
       }
@@ -318,11 +337,11 @@ class BrowserEndpoint {
     // Optionally also search for the node's offsetParent.
     if (offsetParent) {
       try {
-        let offsetParentId: NodeId = await this.getOffsetParentId(id);
-        let offsetParent: Node = await this.getNode(offsetParentId);
+        let offsetParentId: NodeId = await this.getOffsetParentId(nodeId);
+        let offsetParent: Node = await this.getNodeById(offsetParentId);
         result.offsetParent = offsetParent;
       } catch (err) {
-        console.error('Error retrieving offsetParent for node', what);
+        console.error('Error retrieving offsetParent for node', nodeId);
       }
     }
 
@@ -370,13 +389,22 @@ class BrowserEndpoint {
     throw new Error(`couldn't find nodes for ${missingFormat}`);
   }
 
+  async requestStyleForNode({ nodeId }: { nodeId: CRDP$NodeId }) {
+    const style = await this.getStyles(nodeId);
+    this._socketEmit(outgoing.SET_STYLES, {
+      styles: {
+        [nodeId]: style,
+      },
+    });
+  }
+
   /**
    * Get computed and matched styles for the given node.
    */
   async getStyles(nodeId: NodeId): Promise<MatchedStyles> {
     let node: Node;
     try {
-      node = await this.getNode(nodeId);
+      node = await this.getNodeById(nodeId);
     } catch (err) {
       throw err;
     }
@@ -400,7 +428,7 @@ class BrowserEndpoint {
 
     const commandPromises = commands.map(this._sendDebugCommand.bind(this));
     const [matchedStyles, ...computedStyles] = await Promise.all(
-      commandPromises
+      commandPromises,
     );
 
     // Turn computed style arrays into ComputedStyleObjects.
@@ -410,8 +438,8 @@ class BrowserEndpoint {
         cs.reduce(
           (memo, current) =>
             Object.assign(memo, { [current.name]: current.value }),
-          {}
-        )
+          {},
+        ),
       );
 
     // Reverse the order of the matched styles, so that the
@@ -422,24 +450,72 @@ class BrowserEndpoint {
       {},
       matchedStyles,
       { computedStyle },
-      { parentComputedStyle }
+      { parentComputedStyle },
     );
 
     this.styles[nodeId] = styles;
     return styles;
   }
 
+  testfn = () => {};
+
+  nodeInspected = async ({
+    backendNodeId,
+  }: {
+    backendNodeId: CRDP$BackendNodeId,
+  }) => {
+    this.disableInspectMode();
+
+    // Get the nodeId corresponding to the backendId.
+    const [inspectedNodeId] = await this.pushNodesByBackendIdsToFrontend({
+      backendNodeIds: [backendNodeId],
+    });
+    const node = await this.getNodeById(inspectedNodeId);
+    const style = await this.getStyles(inspectedNodeId);
+    this.inspectedNode = node;
+
+    // Send resulting node to server.
+    this._socketEmit(outgoing.SET_INSPECTION_ROOT, {
+      nodeId: inspectedNodeId,
+    });
+    this._socketEmit(outgoing.SET_STYLES, {
+      styles: { [inspectedNodeId]: style },
+    });
+    console.log(`Inspecting node ${inspectedNodeId}`, this.inspectedNode);
+  };
+
+  async pushNodesByBackendIdsToFrontend({
+    backendNodeIds,
+  }: {
+    backendNodeIds: Array<CRDP$BackendNodeId>,
+  }): Promise<Array<CRDP$NodeId>> {
+    const { nodeIds } = await this._sendDebugCommand({
+      method: 'DOM.pushNodesByBackendIdsToFrontend',
+      params: {
+        backendNodeIds,
+      },
+    });
+    return nodeIds;
+  }
+
+  async disableInspectMode() {
+    this._sendDebugCommand({
+      method: 'Overlay.setInspectMode',
+      params: { mode: 'none' },
+    });
+  }
+
   /**
    * Refresh stored styles, e.g. after a style edit has been made.
    */
-  async refreshStyles(): Promise<*> {
+  async refreshStyles(): Promise<NodeStyleMap> {
     const storedNodeIds: NodeId[] = Object.keys(this.styles).map(nodeId =>
-      parseInt(nodeId)
+      parseInt(nodeId),
     );
 
     if (storedNodeIds.length) {
       const updatedStyles = await Promise.all(
-        storedNodeIds.map(this.getStyles.bind(this))
+        storedNodeIds.map(this.getStyles.bind(this)),
       );
 
       // Reduce the pair of arrays back into an object.
@@ -448,7 +524,7 @@ class BrowserEndpoint {
           Object.assign(acc, {
             [storedNodeIds[i]]: currentStyle,
           }),
-        {}
+        {},
       );
     } else {
       console.log('No styles currently stored');
@@ -501,10 +577,30 @@ class BrowserEndpoint {
     return await this.refreshStyles();
   }
 
+  async pushError({ error }: { error: string }) {
+    this._socketEmit(outgoing.ERROR, { error });
+  }
+
+  async toggleCSSProperty({
+    nodeId,
+    ruleIdx,
+    propIdx,
+  }: {
+    nodeId: CRDP$NodeId,
+    ruleIdx: number,
+    propIdx: number,
+  }) {
+    await this._toggleStyle(nodeId, ruleIdx, propIdx);
+    const styles = await this.refreshStyles();
+    this._socketEmit(outgoing.SET_STYLES, {
+      styles,
+    });
+  }
+
   async _toggleStyle(
     nodeId: NodeId,
     ruleIndex: number,
-    propIndex: number
+    propIndex: number,
   ): Promise<> {
     const style: CSSStyle = this.styles[nodeId].matchedCSSRules[ruleIndex].rule
       .style;
@@ -521,11 +617,11 @@ class BrowserEndpoint {
     let nextPropertyText;
     const hasDisabledProperty = Object.prototype.hasOwnProperty.call(
       property,
-      'disabled'
+      'disabled',
     );
     if (!hasDisabledProperty) {
       throw new Error(
-        `Property ${errorMsgRange} appears to not be a source-based property`
+        `Property ${errorMsgRange} appears to not be a source-based property`,
       );
     }
     const isDisabled = property.disabled;
@@ -537,13 +633,13 @@ class BrowserEndpoint {
 
       if (!matches || !matches[1]) {
         throw new Error(
-          `Property ${errorMsgRange} is marked as disabled, but disabled pattern was not found`
+          `Property ${errorMsgRange} is marked as disabled, but disabled pattern was not found`,
         );
       }
       nextPropertyText = matches[1];
       if (!nextPropertyText) {
         throw new Error(
-          `Couldn't find the original text in property ${currentPropertyText}`
+          `Couldn't find the original text in property ${currentPropertyText}`,
         );
       }
     } else {
@@ -561,7 +657,7 @@ class BrowserEndpoint {
         const replacementString = "$`/* $& */$'";
         nextPropertyText = currentPropertyText.replace(
           noNewLineRegex,
-          replacementString
+          replacementString,
         );
       }
     }
@@ -572,12 +668,12 @@ class BrowserEndpoint {
     const currentStyleText = styleText;
     if (!currentStyleText) {
       throw new Error(
-        `Couldn't get style text for node ${nodeId}, rule ${ruleIndex}`
+        `Couldn't get style text for node ${nodeId}, rule ${ruleIndex}`,
       );
     }
     const nextStyleText = currentStyleText.replace(
       currentPropertyText,
-      nextPropertyText
+      nextPropertyText,
     );
     const edit = {
       styleSheetId,
@@ -633,7 +729,7 @@ class BrowserEndpoint {
   resolveProp(path: CSSPropertyPath): CSSProperty {
     if (!this.propExists(path)) {
       throw new Error(
-        `resolveProp: property ${path.nodeId}:${path.ruleIndex}:${path.propIndex} does not exist`
+        `resolveProp: property ${path.nodeId}:${path.ruleIndex}:${path.propIndex} does not exist`,
       );
     }
     const { nodeId, ruleIndex, propIndex } = path;
@@ -657,62 +753,18 @@ class BrowserEndpoint {
     return true;
   }
 
-  /**
-   * Dispatch an incoming request from the socket
-   * server.
-   */
-  async onRequest(req) {
-    const responseTypes = {
-      REQUEST_NODE: 'RECEIVE_NODE',
-      REQUEST_STYLES: 'RECEIVE_STYLES',
-      TOGGLE_PROPERTY: 'RECEIVE_STYLES',
-      PRUNE_STYLES: 'RECEIVE_STYLES',
-    };
-
-    const dispatch = {
-      REQUEST_NODE: async (
-        { selector } // Get offset parent
-      ) => ({ node: await this.getNode(selector, true) }),
-      HIGHLIGHT_NODE: async ({ nodeId }) => this.highlightNode(nodeId),
-      HIGHLIGHT_NONE: () => this.highlightNode(null),
-      REQUEST_STYLES: async ({ nodeId }) => ({
-        updated: {
-          [nodeId]: await this.getStyles(nodeId),
-        },
-      }),
-      TOGGLE_PROPERTY: async ({ nodeId, ruleIndex, propIndex }) => ({
-        updated: await this.toggleStyleAndRefresh({
-          nodeId,
-          ruleIndex,
-          propIndex,
-        }),
-      }),
-      PRUNE_STYLES: async ({ nodeId }) => {
-        await this.prune(nodeId);
-        return {
-          updated: await this.refreshStyles(),
-        };
-      },
-      DEFAULT: ({ type }) => new Error(`unrecognized request type ${type}`),
-    };
-    const action = dispatch[req.type] || dispatch['DEFAULT'];
-    const result = await action(req);
-    const responseType: ?string = responseTypes[req.type] || null;
-
-    if (result instanceof Error) {
-      this._socketEmit('data.err', {
-        id: req.id,
-        type: responseType,
-        message: result.message,
-      });
-    } else {
-      // If the request has a result, return it.
-      // Some requests (e.g. HIGHLIGHT_NODE) do not have a response.
-      if (responseType) {
-        const data = Object.assign({}, req, result, { type: responseType });
-        this._socketEmit('data.res', data);
-      }
+  async pruneNode({ nodeId }: { nodeId: CRDP$NodeId }) {
+    let error;
+    try {
+      await this.prune(nodeId);
+    } catch (pruneError) {
+      error = pruneError.toString();
     }
+    const styles = await this.refreshStyles();
+    this._socketEmit(outgoing.PRUNE_NODE_RESULT, { error });
+    this._socketEmit(outgoing.SET_STYLES, {
+      styles,
+    });
   }
 
   /**
@@ -748,7 +800,7 @@ class BrowserEndpoint {
         }
 
         const screenshot: string = await this.getScreenshotForProperty(
-          propPath
+          propPath,
         );
         const result = await pdiffAgainstBase(screenshot);
         const { numPixelsDifferent } = result;
@@ -822,35 +874,8 @@ class BrowserEndpoint {
        * Fired when a node is inspected after calling DOM.setInspectMode.
        * Sets this.inspectedNode to the NodeId of the clicked element.
        */
-      'Overlay.inspectNodeRequested': async ({ backendNodeId }) => {
-        // Disable inspection mode.
-        window.endpoint._sendDebugCommand({
-          method: 'Overlay.setInspectMode',
-          params: { mode: 'none' },
-        });
+      'Overlay.inspectNodeRequested': this.nodeInspected,
 
-        // Get the nodeId corresponding to the backendId.
-        const { nodeIds } = await this._sendDebugCommand({
-          method: 'DOM.pushNodesByBackendIdsToFrontend',
-          params: {
-            backendNodeIds: [backendNodeId],
-          },
-        });
-        const [inspectedNodeId] = nodeIds;
-        const node = await this.getNode(inspectedNodeId);
-        this.inspectedNode = node;
-
-        // Send resulting node to server.
-        this._socketEmit('data.update', {
-          type: 'UPDATE_ROOT',
-          node: this.inspectedNode,
-          nodeId: inspectedNodeId,
-          styles: this.styles[inspectedNodeId],
-        });
-
-        // Log to debug console.
-        console.log(`Inspecting node ${inspectedNodeId}`, this.inspectedNode);
-      },
       /**
        * Clean up when we refresh page.
        */
@@ -867,10 +892,10 @@ class BrowserEndpoint {
   /**
    * Emit data over the socket.
    */
-  _socketEmit(evtName: string, data: Object) {
+  _socketEmit(message: IncomingMessage, data?: Object) {
     if (this.socket && this.socket.connected) {
-      this.socket.emit(evtName, data);
-      console.log(`Emitting ${evtName} to server`, data);
+      this.socket.emit(message, data);
+      console.log(`Emitting ${message} to server`, data);
     } else {
       console.error(`No socket connection, couldn't emit message`, data);
     }
@@ -905,8 +930,8 @@ class BrowserEndpoint {
 
   _onSocketDisconnect() {
     if (this.socket) {
-      this.socket.off();
-      this.socket = null;
+      // this.socket.off();
+      // this.socket = null;
     }
     console.log('Disconnected from socket');
     // this.cleanup();
