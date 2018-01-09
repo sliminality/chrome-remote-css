@@ -509,15 +509,22 @@ class BrowserEndpoint {
    * Refresh stored styles, e.g. after a style edit has been made.
    */
   async refreshStyles(): Promise<NodeStyleMap> {
+    console.group('refreshStyles');
+    const timerName = `Refreshing ${Object.keys(this.styles).length} styles:`;
+    console.time(timerName);
     const storedNodeIds: NodeId[] = Object.keys(this.styles).map(nodeId =>
       parseInt(nodeId),
     );
 
     if (storedNodeIds.length) {
+      console.time('awaiting updates');
       const updatedStyles = await Promise.all(
         storedNodeIds.map(this.getStyles.bind(this)),
       );
+      console.timeEnd('awaiting updates');
+      console.log('finished updating styles:', Date.now());
 
+      console.time('reducing style arrays');
       // Reduce the pair of arrays back into an object.
       this.styles = updatedStyles.reduce(
         (acc, currentStyle, i) =>
@@ -526,10 +533,12 @@ class BrowserEndpoint {
           }),
         {},
       );
+      console.timeEnd('reducing style arrays');
     } else {
       console.log('No styles currently stored');
     }
-
+    console.timeEnd(timerName);
+    console.groupEnd();
     return this.styles;
   }
 
@@ -592,6 +601,7 @@ class BrowserEndpoint {
   }) {
     await this._toggleStyle(nodeId, ruleIdx, propIdx);
     const styles = await this.refreshStyles();
+    console.log('emitting styles:', Date.now());
     this._socketEmit(outgoing.SET_STYLES, {
       styles,
     });
@@ -754,6 +764,7 @@ class BrowserEndpoint {
   }
 
   async pruneNode({ nodeId }: { nodeId: CRDP$NodeId }) {
+    // Add a field: recursive, defaults to true.
     let error;
     try {
       await this.prune(nodeId);
@@ -779,7 +790,10 @@ class BrowserEndpoint {
     const { data: base } = await this._sendDebugCommand({
       method: 'Page.captureScreenshot',
     });
-    const pdiffAgainstBase = await pdiff(base, { maxDiff: 0 });
+    const pdiffAgainstBase = await pdiff(base, {
+      threshold: 0,
+      maxDiff: 0,
+    });
 
     for (const [ruleIndex, ruleMatch] of matchedCSSRules.entries()) {
       const { cssProperties } = ruleMatch.rule.style;
@@ -808,7 +822,7 @@ class BrowserEndpoint {
         // relevant, so we put it back.
         if (numPixelsDifferent > 0) {
           try {
-            await this.toggleStyleAndRefresh({ nodeId, ruleIndex, propIndex });
+            await this._toggleStyle(nodeId, ruleIndex, propIndex);
           } catch (toggleStyleError) {
             console.error(toggleStyleError);
           }
@@ -869,6 +883,7 @@ class BrowserEndpoint {
        */
       'DOM.documentUpdated': async () => {
         this.getDocumentRoot();
+        this.refreshStyles();
       },
       /**
        * Fired when a node is inspected after calling DOM.setInspectMode.
