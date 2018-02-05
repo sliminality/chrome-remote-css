@@ -30,16 +30,29 @@ type DiffResult = {
   diffImage?: ImageData,
 };
 
+type Dimensions = {
+  width: number,
+  height: number,
+};
+
+class DimensionMismatchError extends Error {}
+
+function _formatDimensions({width, height}: Dimensions) {
+  return `${width}x${height}`;
+}
+
 async function pdiff(before64: Base64String, options: DiffOptions = {}) {
   const before = await getImageData(before64);
   const resolvedOptions = resolveDiffOptions(options);
 
   return async function(after64: Base64String): Promise<DiffResult> {
     const after = await getImageData(after64);
-    assert(
-      before.height === after.height && before.width === after.width,
-      'image dimensions do not match'
-    );
+    const dimensionsMatch = before.height === after.height && before.width === after.width;
+    if (!dimensionsMatch) {
+      const beforeDims = _formatDimensions(before);
+      const afterDims = _formatDimensions(after);
+      throw new DimensionMismatchError(`Images do not match: ${beforeDims} vs ${afterDims}`);
+    }
     const { width, height } = before;
 
     const writeDiff = !!resolvedOptions.writeDiff;
