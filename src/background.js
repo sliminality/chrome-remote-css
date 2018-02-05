@@ -545,31 +545,41 @@ class BrowserEndpoint {
   /**
    * Refresh stored styles, e.g. after a style edit has been made.
    */
-  async refreshStyles(): Promise<NodeStyleMap> {
+  async refreshStyles(nodeId?: NodeId): Promise<NodeStyleMap> {
     console.group('refreshStyles');
     const timerName = `Refreshing ${Object.keys(this.styles).length} styles:`;
     console.time(timerName);
-    const storedNodeIds: NodeId[] = Object.keys(this.styles).map(nodeId =>
-      parseInt(nodeId),
-    );
 
-    if (storedNodeIds.length) {
+    const nodesToUpdate: Array<NodeId> =
+      typeof nodeId === 'number'
+        ? [nodeId]
+        : Object.keys(this.styles).map(str => parseInt(str, 10));
+
+    // const storedNodeIds: NodeId[] = Object.keys(this.styles).map(nodeId =>
+    //   parseInt(nodeId),
+    // );
+
+    if (nodesToUpdate.length) {
       console.time('awaiting updates');
       const updatedStyles = await Promise.all(
-        storedNodeIds.map(this.getStyles.bind(this)),
+        nodesToUpdate.map(this.getStyles.bind(this)),
       );
       console.timeEnd('awaiting updates');
       console.log('finished updating styles:', Date.now());
 
       console.time('reducing style arrays');
       // Reduce the pair of arrays back into an object.
-      this.styles = updatedStyles.reduce(
-        (acc, currentStyle, i) =>
-          Object.assign(acc, {
-            [storedNodeIds[i]]: currentStyle,
-          }),
-        {},
-      );
+      for (let i = 0; i < updatedStyles.length; i += 1) {
+        this.styles[nodesToUpdate[i]] = updatedStyles[i];
+      }
+
+      // this.styles = updatedStyles.reduce(
+      //   (acc, currentStyle, i) =>
+      //     Object.assign(acc, {
+      //       [nodesToUpdate[i]]: currentStyle,
+      //     }),
+      //   {},
+      // );
       console.timeEnd('reducing style arrays');
     } else {
       console.log('No styles currently stored');
@@ -637,7 +647,7 @@ class BrowserEndpoint {
     propIdx: number,
   }) {
     await this._toggleStyle(nodeId, ruleIdx, propIdx);
-    const styles = await this.refreshStyles();
+    const styles = await this.refreshStyles(nodeId);
     console.log('emitting styles:', Date.now());
     this._socketEmit(outgoing.SET_STYLES, {
       styles,
@@ -675,6 +685,7 @@ class BrowserEndpoint {
     if (isDisabled) {
       // Need to re-enable it.
       // /* foo: bar; */ => foo: bar;
+      // TODO: Fix bug with capturing regex.
       const disabledRegex = /\/\*\s+(.+)\s+\*\//;
       const matches = currentPropertyText.match(disabledRegex);
 
