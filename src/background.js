@@ -454,10 +454,47 @@ class BrowserEndpoint {
     );
 
     this.styles[nodeId] = styles;
+
     return styles;
   }
 
-  testfn = () => {};
+  captureScreenshot = async (nodeId?: CRDP$NodeId) => {
+    const params = {};
+
+    if (nodeId && typeof nodeId === 'number') {
+      const [{ visualViewport }, { model }] = await Promise.all([
+        this._sendDebugCommand({
+          method: 'Page.getLayoutMetrics',
+        }),
+        this._sendDebugCommand({
+          method: 'DOM.getBoxModel',
+          params: { nodeId },
+        }),
+      ]);
+
+      const { pageY } = visualViewport;
+      const { border: [elX, elY], width, height } = model;
+      const elViewport = {
+        x: elX,
+        y: pageY + elY,
+        width,
+        height,
+        scale: 1,
+      };
+
+      params.clip = elViewport;
+    }
+
+    const { data } = await this._sendDebugCommand({
+      method: 'Page.captureScreenshot',
+      params,
+    });
+
+    // const url = 'data:image/png;base64,'.concat(data);
+    // chrome.tabs.create({url});
+
+    return data;
+  };
 
   nodeInspected = async ({
     backendNodeId,
