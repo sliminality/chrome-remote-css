@@ -13,6 +13,7 @@
   "permissions": [
     "tabs",
     "activeTab",
-    "debugger"
+    "debugger",
+    "contextMenus"
   ]
 }

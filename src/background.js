@@ -1043,4 +1043,11 @@ async function main() {
   window.endpoint.selectNode();
 }
 
+// // HACK: Bind the test menu item.
+// chrome.contextMenus.create({
+//   title: 'Test pruning',
+//   contexts: ['browser_action'],
+//   onclick: testPruning,
+// });
+
 chrome.browserAction.onClicked.addListener(main);
