@@ -812,13 +812,23 @@ class BrowserEndpoint {
   }
 
   async pruneNode({ nodeId }: { nodeId: CRDP$NodeId }) {
-    // Add a field: recursive, defaults to true.
-    let error;
-    try {
+    const _pruneNodeHelper = async (nodeId: CRDP$NodeId) => {
       await this.prune(nodeId);
+      const currentNode = this.nodes[nodeId];
+      const { children } = currentNode;
+      for (const child of children) {
+        await _pruneNodeHelper(child.nodeId);
+      }
+    };
+
+    let error;
+
+    try {
+      await _pruneNodeHelper(nodeId);
     } catch (pruneError) {
-      error = pruneError.toString();
+      error = pruneError.message;
     }
+
     const styles = await this.refreshStyles();
     this._socketEmit(outgoing.PRUNE_NODE_RESULT, { error });
     this._socketEmit(outgoing.SET_STYLES, {
