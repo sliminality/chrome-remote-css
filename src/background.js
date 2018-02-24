@@ -3,6 +3,7 @@ import ChromePromise from 'chrome-promise';
 import cssbeautify from 'cssbeautify';
 import io from 'socket.io-client';
 import pdiff, { DimensionMismatchError, prefixURI } from './pdiff';
+import { replacePropertyInStyleText } from './styles';
 import {
   serverToClient as outgoing,
   clientToServer as incoming,
@@ -746,8 +747,9 @@ class BrowserEndpoint {
         `Couldn't get style text for node ${nodeId}, rule ${ruleIndex}`,
       );
     }
-    const nextStyleText = currentStyleText.replace(
-      currentPropertyText,
+    const nextStyleText = replacePropertyInStyleText(
+      style,
+      property,
       nextPropertyText,
     );
     const edit = {
