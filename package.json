@@ -38,7 +38,16 @@
     ],
     "plugins": [
       "transform-runtime",
-      "transform-class-properties"
+      "transform-class-properties",
+      [
+        "babel-plugin-transform-builtin-extend",
+        {
+          "globals": [
+            "Error",
+            "Array"
+          ]
+        }
+      ]
     ]
   },
   "scripts": {
@@ -48,6 +57,7 @@
     "test": "ava"
   },
   "dependencies": {
+    "babel-plugin-transform-builtin-extend": "^1.1.2",
     "babel-runtime": "^6.26.0",
     "chrome-promise": "^2.0.3",
     "cssbeautify": "^0.3.1",
