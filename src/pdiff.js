@@ -35,7 +35,12 @@ type Dimensions = {
   height: number,
 };
 
-class DimensionMismatchError extends Error {}
+class DimensionMismatchError extends Error {
+  constructor(message?: string) {
+    super(message);
+    this.name = 'DimensionMismatchError';
+  }
+}
 
 function _formatDimensions({width, height}: Dimensions) {
   return `${width}x${height}`;
@@ -145,4 +150,4 @@ function prefixURI(uri: Base64String): Base64String {
 }
 
 export default pdiff;
-export { prefixURI, getImageData };
+export { prefixURI, getImageData, DimensionMismatchError };

@@ -2,7 +2,7 @@
 import ChromePromise from 'chrome-promise';
 import cssbeautify from 'cssbeautify';
 import io from 'socket.io-client';
-import pdiff from './pdiff';
+import pdiff, { DimensionMismatchError, prefixURI } from './pdiff';
 import {
   serverToClient as outgoing,
   clientToServer as incoming,
@@ -65,6 +65,7 @@ class BrowserEndpoint {
   styles: { [NodeId]: MatchedStyles };
   inspectedNode: ?Node;
   entities: { nodes: NormalizedNodeMap };
+  ruleAnnotations: { [NodeId]: Array<?CSSRuleAnnotation> };
 
   _debugEventDispatch: (Target, string, Object) => Promise<*>;
 
@@ -78,6 +79,7 @@ class BrowserEndpoint {
     this.inspectedNode = null;
     this.styles = {};
     this.nodes = {};
+    this.ruleAnnotations = {};
 
     // Bind `this` in the constructor, so we can
     // detach event handler by reference during cleanup.
@@ -132,7 +134,7 @@ class BrowserEndpoint {
 
     // Once we have the DOM and are ready to handle
     // incoming requests, open the socket.
-    if (this.socket) {
+    if (this.socket && !this.socket.connected) {
       // Need to store the value of this.socket to
       // prevent Flow from invalidating the refinement.
       const { socket } = this;
@@ -251,11 +253,23 @@ class BrowserEndpoint {
    * Highlight a node on the inspected page.
    * If argument is null, disable highlight.
    */
-  async highlightNode({ nodeId }: { nodeId: CRDP$NodeId }) {
+  async highlightNode({
+    nodeId,
+    selectorList,
+  }: {
+    nodeId: CRDP$NodeId,
+    selectorList?: string,
+  }) {
+    let highlightConfig = NODE_HIGHLIGHT;
+
+    if (selectorList) {
+      highlightConfig = Object.assign({}, highlightConfig, { selectorList });
+    }
+
     this._sendDebugCommand({
       method: 'DOM.highlightNode',
       params: {
-        highlightConfig: NODE_HIGHLIGHT,
+        highlightConfig,
         nodeId,
       },
     });
@@ -446,11 +460,14 @@ class BrowserEndpoint {
     // highest-specificity styles come first.
     matchedStyles.matchedCSSRules.reverse();
 
+    // Get any rule annotations.
+    const ruleAnnotations = this.ruleAnnotations[nodeId];
+
     const styles = Object.assign(
       {},
       matchedStyles,
-      { computedStyle },
-      { parentComputedStyle },
+      { computedStyle, parentComputedStyle },
+      ruleAnnotations ? { ruleAnnotations } : null,
     );
 
     this.styles[nodeId] = styles;
@@ -546,7 +563,7 @@ class BrowserEndpoint {
    * Refresh stored styles, e.g. after a style edit has been made.
    */
   async refreshStyles(nodeId?: NodeId): Promise<NodeStyleMap> {
-    console.group('refreshStyles');
+    console.groupCollapsed('refreshStyles');
     const timerName = `Refreshing ${Object.keys(this.styles).length} styles:`;
     console.time(timerName);
 
@@ -824,7 +841,8 @@ class BrowserEndpoint {
     let error;
 
     try {
-      await _pruneNodeHelper(nodeId);
+      // await _pruneNodeHelper(nodeId);
+      await this.prune(nodeId);
     } catch (pruneError) {
       error = pruneError.message;
     }
@@ -840,22 +858,37 @@ class BrowserEndpoint {
    * Prune properties for some node.
    */
   async prune(nodeId: NodeId): Promise<> {
-    // Get current styles for the node.
+    console.groupCollapsed('Pruning node', nodeId);
+
+    // Get current styles and screenshots for node.
+    console.log('Getting initial styles...');
     const nodeStyles: MatchedStyles = await this.getStyles(nodeId);
     const { matchedCSSRules } = nodeStyles;
     const allPruned = [];
 
-    const { data: base } = await this._sendDebugCommand({
-      method: 'Page.captureScreenshot',
+    const basePage = await this.captureScreenshot();
+    const baseElement = await this.captureScreenshot(nodeId);
+
+    // Attach screenshots to the window for debugging.
+    window.screenshots = [];
+    window.screenshots.push({
+      type: 'base',
+      page: basePage,
+      element: baseElement,
     });
-    const pdiffAgainstBase = await pdiff(base, {
-      threshold: 0,
-      maxDiff: 0,
-    });
+
+    const pdiffOptions = { threshold: 0, maxDiff: 0 };
+    const [pdiffAll, pdiffElement] = await Promise.all([
+      pdiff(basePage, pdiffOptions),
+      pdiff(baseElement, pdiffOptions),
+    ]);
+
+    const ruleAnnotations = [];
 
     for (const [ruleIndex, ruleMatch] of matchedCSSRules.entries()) {
       const { cssProperties } = ruleMatch.rule.style;
-      let propsRemoved: CSSProperty[] = [];
+      let pruneResults = [];
+      let ruleAnnotation = null;
 
       for (const [propIndex, prop] of cssProperties.entries()) {
         const propPath: CSSPropertyPath = {
@@ -863,6 +896,7 @@ class BrowserEndpoint {
           ruleIndex,
           propIndex,
         };
+
         // Don't try to toggle if the property is a longhand expansion,
         // or if it's already disabled.
         const skip =
@@ -871,39 +905,137 @@ class BrowserEndpoint {
           continue;
         }
 
-        const screenshot: string = await this.getScreenshotForProperty(
-          propPath,
-        );
-        const result = await pdiffAgainstBase(screenshot);
-        const { numPixelsDifferent } = result;
-        // If there is a nonzero difference, the property is potentially
-        // relevant, so we put it back.
-        if (numPixelsDifferent > 0) {
+        console.log(prop.name);
+
+        await this.toggleStyleAndRefresh({ nodeId, ruleIndex, propIndex });
+
+        const hasDiff = { element: false, page: false };
+        const screenshotElement = await this.captureScreenshot(nodeId);
+        window.screenshots.push({
+          prop: prop.name,
+          element: screenshotElement,
+        });
+
+        // First compute pdiff wrt the element itself. If removing the property
+        // causes regression wrt the element, it trivially causes regression wrt
+        // the page.
+        try {
+          const { numPixelsDifferent } = await pdiffElement(screenshotElement);
+          if (numPixelsDifferent > 0) {
+            hasDiff.element = true;
+            hasDiff.page = true;
+          }
+        } catch (pdiffErr) {
+          if (pdiffErr instanceof DimensionMismatchError) {
+            // If disabling the property causes the element to change shape,
+            // there is a clear visual regression.
+            hasDiff.element = true;
+            hasDiff.page = true;
+          } else {
+            // Log this error?
+            console.error(pdiffErr);
+          }
+        }
+
+        // Only need to compute the page-level pdiff if the element-level result
+        // is zero.
+        if (!hasDiff.element) {
+          const screenshotPage = await this.captureScreenshot();
+          window.screenshots[
+            window.screenshots.length - 1
+          ].page = screenshotPage;
+          try {
+            const { numPixelsDifferent } = await pdiffAll(screenshotPage);
+            if (numPixelsDifferent > 0) {
+              hasDiff.page = true;
+            }
+          } catch (pdiffErr) {
+            if (pdiffErr instanceof DimensionMismatchError) {
+              hasDiff.page = true;
+            } else {
+              console.error(pdiffErr);
+            }
+          }
+        }
+
+        // If there is a nonzero difference at either the element or page level,
+        // the property is potentially relevant, so we need to reinstate it.
+        if (hasDiff.element || hasDiff.page) {
           try {
             await this._toggleStyle(nodeId, ruleIndex, propIndex);
           } catch (toggleStyleError) {
             console.error(toggleStyleError);
           }
-        } else {
-          // If 0 pixels were different, we prune the prop.
-          propsRemoved.push(prop);
         }
+
+        // If the current property has effects outside the current element,
+        // mark the current rule as having a base style, and note
+        // the property index.
+        // TODO: Make this a separate function, annotateRule.
+        if (!hasDiff.element && hasDiff.page) {
+          if (!ruleAnnotation) {
+            ruleAnnotation = {
+              type: 'BASE_STYLE',
+              shadowedProperties: [propIndex],
+            };
+          } else {
+            ruleAnnotation.shadowedProperties.push(propIndex);
+          }
+        }
+
+        // Log the differences recorded.
+        pruneResults.push(
+          Object.assign({}, hasDiff, {
+            prop: prop.name,
+          }),
+        );
       }
-      allPruned.push([ruleMatch.rule.selectorList.text, propsRemoved]);
+
+      // At the end of the rule, add the list of prune results to an object.
+      allPruned.push([ruleMatch.rule.selectorList.text, pruneResults]);
+
+      // TODO: This assumes the number and order of rules never
+      // changes between style refreshes. Need to change this to
+      // something less brittle if we ever add the ability to
+      // insert/delete/move rules around within the cascade.
+      ruleAnnotations.push(ruleAnnotation);
     }
-    console.log(allPruned);
+
+    // Update the stored rule annotations for the next style refresh.
+    console.assert(ruleAnnotations.length === matchedCSSRules.length);
+    this.ruleAnnotations[nodeId] = ruleAnnotations;
+
+    console.log('all pruned', allPruned);
+    console.log(
+      'page not self',
+      allPruned
+        .map(([selector, props]) => [
+          selector,
+          props.filter(({ element, page }) => !element && page),
+        ])
+        .filter(([, specialProps]) => specialProps.length > 0),
+    );
+
+    console.groupEnd();
   }
 
   async getScreenshotForProperty({
     nodeId,
     ruleIndex,
     propIndex,
-  }: CSSPropertyPath): Promise<string> {
+  }: CSSPropertyPath): Promise<{ page: string, el: string }> {
+    // TODO: Deprecate this function.
     await this.toggleStyleAndRefresh({ nodeId, ruleIndex, propIndex });
-    const { data } = await this._sendDebugCommand({
-      method: 'Page.captureScreenshot',
-    });
-    return data;
+
+    // Can't do these in parallel because of viewport resize.
+    const page = await this.captureScreenshot();
+    const el = await this.captureScreenshot(nodeId);
+
+    const result = {
+      page,
+      el,
+    };
+    return result;
   }
 
   /**
@@ -940,6 +1072,7 @@ class BrowserEndpoint {
        * are no longer valid.
        */
       'DOM.documentUpdated': async () => {
+        console.log('%cdocument updated', 'color: green; font-weight: bold;');
         this.getDocumentRoot();
         this.refreshStyles();
       },
@@ -980,7 +1113,12 @@ class BrowserEndpoint {
   async _sendDebugCommand({ method, params }) {
     // Highlighting will get called frequently and clog the console.
     if (method !== 'DOM.highlightNode' && method !== 'DOM.hideHighlight') {
-      console.log(method, params, this.target);
+      console.log(
+        `%c${method}`,
+        'color: grey; font-weight: light;',
+        params,
+        this.target,
+      );
     }
     return await cp.debugger.sendCommand(this.target, method, params);
   }
@@ -1049,5 +1187,7 @@ async function main() {
 //   contexts: ['browser_action'],
 //   onclick: testPruning,
 // });
+
+window.open = uri => chrome.tabs.create({ url: prefixURI(uri) });
 
 chrome.browserAction.onClicked.addListener(main);
