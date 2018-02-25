@@ -3,7 +3,7 @@ import ChromePromise from 'chrome-promise';
 import cssbeautify from 'cssbeautify';
 import io from 'socket.io-client';
 import pdiff, { DimensionMismatchError, prefixURI } from './pdiff';
-import { replacePropertyInStyleText } from './styles';
+import { replacePropertyInStyleText } from './styleEdit';
 import {
   serverToClient as outgoing,
   clientToServer as incoming,

@@ -1,244 +1,50 @@
 // @flow @format
 import test from 'ava';
-import {
-  sourceRangeToIndices,
-  replaceRange,
-  replacePropertyInStyleText,
-} from '../src/styles';
+import { buildCSS } from './helpers/styleHelpers';
 
-test('converting one-line CSSSourceRange to indices', t => {
-  const str = `line zero
-line one
-  indented line two
-  `;
-  const range = {
-    startLine: 0,
-    startColumn: 0,
-    endLine: 0,
-    endColumn: 7,
-  };
-  const indices = sourceRangeToIndices(str, range);
-  const substring = str.substring(...indices);
-  t.is(substring, 'line ze');
-});
+import type { CRDP$CSSProperty } from 'devtools-typed/CSS';
+import type { MockCSSRuleMatch, CSSInput } from './helpers/styleHelpers';
 
-test('converting multi-line CSSSourceRange to indices', t => {
-  const str = `line zero
-line one
-  indented line two
-  `;
-  const range = {
-    startLine: 1,
-    startColumn: 3,
-    endLine: 2,
-    endColumn: 17,
-  };
-  const indices = sourceRangeToIndices(str, range);
-  const substring = str.substring(...indices);
-  t.is(
-    substring,
-    `e one
-  indented line t`,
-  );
-});
-
-test('replace multi-line text ranges', t => {
-  const str = `line zero
-line one
-  indented line two
-  `;
-  const range = {
-    startLine: 1,
-    startColumn: 3,
-    endLine: 2,
-    endColumn: 17,
-  };
-  const result = replaceRange(str, range, 'floobar');
-  t.is(
-    result,
-    `line zero
-linfloobarwo
-  `,
-  );
-});
-
-test('replace property in style', t => {
-  const style = {
-    cssProperties: [
-      {
-        disabled: false,
-        implicit: false,
-        name: 'border-color',
-        range: {
-          endColumn: 23,
-          endLine: 17471,
-          startColumn: 4,
-          startLine: 17471,
-        },
-        text: 'border-color: #000;',
-        value: '#000',
-      },
-      {
-        disabled: false,
-        implicit: false,
-        name: 'color',
-        range: {
-          endColumn: 16,
-          endLine: 17472,
-          startColumn: 4,
-          startLine: 17472,
-        },
-        text: 'color: #000;',
-        value: '#000',
-      },
-      {
-        disabled: false,
-        implicit: false,
-        name: 'margin-bottom',
-        range: {
-          endColumn: 0,
-          endLine: 17474,
-          startColumn: 4,
-          startLine: 17473,
-        },
-        text: 'margin-bottom: 35px\n',
-        value: '35px',
-      },
-      {
-        name: 'border-top-color',
-        value: 'rgb(0, 0, 0)',
-      },
-      {
-        name: 'border-right-color',
-        value: 'rgb(0, 0, 0)',
-      },
-      {
-        name: 'border-bottom-color',
-        value: 'rgb(0, 0, 0)',
-      },
-      {
-        name: 'border-left-color',
-        value: 'rgb(0, 0, 0)',
-      },
-    ],
-    cssText:
-      '\n    border-color: #000;\n    color: #000;\n    margin-bottom: 35px\n',
-    range: {
-      endColumn: 0,
-      endLine: 17474,
-      startColumn: 27,
-      startLine: 17470,
+test('build CSS from example', t => {
+  const input = {
+    '.foo': {
+      margin: '10px',
+      'margin-top': '20px',
+      'margin-right': '20px',
+      'margin-bottom': '20px !important',
+      'margin-left': '20px',
     },
-    shorthandEntries: [
-      {
-        name: 'border-color',
-        value: 'rgb(0, 0, 0)',
-      },
-    ],
-    styleSheetId: '28618.56',
-  };
-
-  const property = {
-    disabled: false,
-    implicit: false,
-    name: 'border-color',
-    range: {
-      endColumn: 23,
-      endLine: 17471,
-      startColumn: 4,
-      startLine: 17471,
+    '.bar': {
+      margin: '30px',
     },
-    text: 'border-color: #000;',
-    value: '#000',
   };
 
-  const result = replacePropertyInStyleText(
-    style,
-    property,
-    '/* border-color: #000; */',
-  );
-
-  t.is(
-    result,
-    '\n    /* border-color: #000; */\n    color: #000;\n    margin-bottom: 35px\n',
-  );
-});
-
-test('replace property in style with multiple substring occurrences', t => {
-  const style = {
-    cssProperties: [
-      {
-        disabled: true,
-        name: 'border-color',
-        range: {
-          endColumn: 29,
-          endLine: 17471,
-          startColumn: 4,
-          startLine: 17471,
+  const expected = [
+    {
+      rule: {
+        style: {
+          cssProperties: [
+            { name: 'margin', value: '10px' },
+            { name: 'margin-top', value: '20px' },
+            { name: 'margin-right', value: '20px' },
+            {
+              name: 'margin-bottom',
+              value: '20px !important',
+              important: true,
+            },
+            { name: 'margin-left', value: '20px' },
+          ],
         },
-        text: '/* border-color: #000; */',
-        value: '#000',
       },
-      {
-        disabled: false,
-        implicit: false,
-        name: 'color',
-        range: {
-          endColumn: 16,
-          endLine: 17472,
-          startColumn: 4,
-          startLine: 17472,
-        },
-        text: 'color: #000;',
-        value: '#000',
-      },
-      {
-        disabled: false,
-        implicit: false,
-        name: 'margin-bottom',
-        range: {
-          endColumn: 0,
-          endLine: 17477,
-          startColumn: 4,
-          startLine: 17473,
-        },
-        text: 'margin-bottom: 35px\n\n\n\n',
-        value: '35px',
-      },
-    ],
-    cssText:
-      '\n    /* border-color: #000; */\n    color: #000;\n    margin-bottom: 35px\n\n\n\n',
-    range: {
-      endColumn: 0,
-      endLine: 17477,
-      startColumn: 27,
-      startLine: 17470,
     },
-    shorthandEntries: [],
-    styleSheetId: '28618.145',
-  };
-  const property = {
-    disabled: false,
-    implicit: false,
-    name: 'color',
-    range: {
-      endColumn: 16,
-      endLine: 17472,
-      startColumn: 4,
-      startLine: 17472,
+    {
+      rule: {
+        style: {
+          cssProperties: [{ name: 'margin', value: '30px' }],
+        },
+      },
     },
-    text: 'color: #000;',
-    value: '#000',
-  };
+  ];
 
-  const result = replacePropertyInStyleText(
-    style,
-    property,
-    '/* color: #000; */',
-  );
-
-  t.is(
-    result,
-    '\n    /* border-color: #000; */\n    /* color: #000; */\n    margin-bottom: 35px\n\n\n\n',
-  );
+  t.deepEqual(buildCSS(input), expected);
 });
