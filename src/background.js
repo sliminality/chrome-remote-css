@@ -992,7 +992,9 @@ class BrowserEndpoint {
         // mark the current rule as having a base style, and note
         // the property index.
         // TODO: Make this a separate function, annotateRule.
-        if (!hasDiff.element && hasDiff.page) {
+        // HACK: There are false positives with `margin-top`.
+        // TODO: Investigate this and fix.
+        if (!hasDiff.element && hasDiff.page && prop.name !== 'margin-top') {
           if (!ruleAnnotation) {
             ruleAnnotation = {
               type: 'BASE_STYLE',
