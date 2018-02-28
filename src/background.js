@@ -859,7 +859,7 @@ class BrowserEndpoint {
   /**
    * Prune properties for some node.
    */
-  async prune(nodeId: NodeId): Promise<> {
+  async prune(nodeId: NodeId, condition?: CSSPropertyPath): Promise<> {
     console.groupCollapsed('Pruning node', nodeId);
 
     // Get current styles and screenshots for node.
@@ -868,8 +868,20 @@ class BrowserEndpoint {
     const { matchedCSSRules } = nodeStyles;
     const allPruned = [];
 
-    const basePage = await this.captureScreenshot();
-    const baseElement = await this.captureScreenshot(nodeId);
+    let basePage;
+    let baseElement;
+
+    // If conditioning on a property, disable it first.
+    if (condition) {
+      ({
+        page: basePage,
+        el: baseElement,
+      } = await this.getScreenshotForProperty(condition));
+      await this.scrollIntoViewIfNeeded(nodeId);
+    } else {
+      basePage = await this.captureScreenshot();
+      baseElement = await this.captureScreenshot(nodeId);
+    }
 
     // Attach screenshots to the window for debugging.
     window.screenshots = [];
@@ -901,9 +913,15 @@ class BrowserEndpoint {
 
         // Don't try to toggle if the property is a longhand expansion,
         // or if it's already disabled.
-        const skip =
-          !this.isDeclaredProperty(propPath) || this.isDisabled(propPath);
-        if (skip) {
+        if (!this.isDeclaredProperty(propPath)) {
+          continue;
+        }
+        if (this.isDisabled(propPath)) {
+          continue;
+        }
+        // Static VRP can't detect animation and interactive properties,
+        // so don't prune these.
+        if (prop.name === 'transition' || prop.name === 'cursor') {
           continue;
         }
 
@@ -1019,6 +1037,48 @@ class BrowserEndpoint {
     );
 
     console.groupEnd();
+  }
+
+  async scrollIntoViewIfNeeded(nodeId: CRDP$NodeId): Promise<> {
+    const { model } = await this._sendDebugCommand({
+      method: 'DOM.getBoxModel',
+      params: { nodeId },
+    });
+    const { border, content, height, width } = model;
+    const [x, y] = border || content;
+    const { visualViewport } = await this._sendDebugCommand({
+      method: 'Page.getLayoutMetrics',
+    });
+    const { clientHeight, clientWidth, pageX, pageY } = visualViewport;
+
+    const page = {
+      x: { start: pageX, end: pageX + clientWidth },
+      y: { start: pageY, end: pageY + clientHeight },
+    };
+    const el = {
+      x: { start: x, end: x + width },
+      y: { start: y, end: y + height },
+    };
+
+    // Check whether element is small enough to view entirely.
+    const elementTooWide = width > clientWidth;
+    const elementTooTall = height > clientHeight;
+    const elementTooLarge = elementTooWide || elementTooTall;
+    const isVisibleX = page.x.start <= el.x.start && el.x.start <= page.x.end;
+    const isVisibleY = page.y.start <= el.y.start && el.y.start <= page.y.end;
+
+    // TODO: Don't scroll page if element is too large, and at all in view.
+    const isVisible = elementTooLarge || (isVisibleX && isVisibleY);
+
+    if (!isVisible) {
+      // Scroll entire element into view.
+      return await this._sendDebugCommand({
+        method: 'Runtime.evaluate',
+        params: {
+          expression: `window.scrollTo(document.documentElement.scrollLeft + ${x}, document.documentElement.scrollTop + ${y})`,
+        },
+      });
+    }
   }
 
   async getScreenshotForProperty({
