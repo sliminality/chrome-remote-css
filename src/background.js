@@ -835,9 +835,11 @@ class BrowserEndpoint {
     const _pruneNodeHelper = async (nodeId: CRDP$NodeId) => {
       await this.prune(nodeId);
       const currentNode = this.nodes[nodeId];
-      const { children } = currentNode;
-      for (const child of children) {
-        await _pruneNodeHelper(child.nodeId);
+      if (currentNode.children) {
+        const { children } = currentNode;
+        for (const child of children) {
+          await _pruneNodeHelper(child.nodeId);
+        }
       }
     };
 
@@ -1211,7 +1213,7 @@ class BrowserEndpoint {
   /**
    * Dispatch a command to the chrome.debugger API.
    */
-  async _sendDebugCommand({ method, params }: {method: string, params?: Object}) {
+  async _sendDebugCommand({ method, params }: { method: string, params?: Object }) {
     // Highlighting will get called frequently and clog the console.
     if (method !== 'DOM.highlightNode' && method !== 'DOM.hideHighlight') {
       console.log(
