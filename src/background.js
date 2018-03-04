@@ -846,7 +846,7 @@ class BrowserEndpoint {
       // await _pruneNodeHelper(nodeId);
       await this.prune(nodeId);
     } catch (pruneError) {
-      error = pruneError.message;
+      error = {message: pruneError.message, stack: pruneError.stack};
     }
 
     const styles = await this.refreshStyles();
