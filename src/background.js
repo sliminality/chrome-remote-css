@@ -804,7 +804,7 @@ class BrowserEndpoint {
     return hasText && hasRange;
   }
 
-  resolveProp(path: CSSPropertyPath): CSSProperty {
+  resolveProp(path: CSSPropertyPath): CRDP$CSSProperty {
     if (!this.propExists(path)) {
       throw new Error(
         `resolveProp: property ${path.nodeId}:${path.ruleIndex}:${path.propIndex} does not exist`,
@@ -899,8 +899,9 @@ class BrowserEndpoint {
     ]);
 
     const ruleAnnotations = [];
+    const rules = matchedCSSRules.entries();
 
-    for (const [ruleIndex, ruleMatch] of matchedCSSRules.entries()) {
+    for (const [ruleIndex, ruleMatch] of rules) {
       const { cssProperties } = ruleMatch.rule.style;
       let pruneResults = [];
       let ruleAnnotation = null;
@@ -1024,22 +1025,57 @@ class BrowserEndpoint {
       ruleAnnotations.push(ruleAnnotation);
     }
 
-    // Update the stored rule annotations for the next style refresh.
-    console.assert(ruleAnnotations.length === matchedCSSRules.length);
-    this.ruleAnnotations[nodeId] = ruleAnnotations;
+    // Done pruning all rules in style.
+    // Mark the rules pruned in source.
+    // TODO: Figure out some way to invalidate this later?
+    // eslint-disable-next-line no-unused-vars
+    for (const rule of matchedCSSRules) {
+      await this.markRulePruned(rule);
+    }
 
-    console.log('all pruned', allPruned);
+    console.log('allPruned', allPruned);
     console.log(
-      'page not self',
-      allPruned
-        .map(([selector, props]) => [
-          selector,
-          props.filter(({ element, page }) => !element && page),
-        ])
-        .filter(([, specialProps]) => specialProps.length > 0),
-    );
-
+     'page not self',
+     allPruned
+       .map(([selector, props]) => [
+         selector,
+         props.filter(({ element, page }) => !element && page),
+       ])
+       .filter(([, specialProps]) => specialProps.length > 0),
+   );
     console.groupEnd();
+  }
+
+  async markRulePruned(rule: CRDP$CSSRule) {
+    const {style, styleSheetId, origin} = rule;
+    const {cssText, range} = style;
+
+    if (origin !== 'regular' || !cssText) {
+      throw new Error(`Cannot edit range for rule with origin ${origin}`);
+    }
+
+    if (cssText && !cssText.match(/^\/\*\* PRUNED \*\//)) {
+      // No need to double-mark.
+      return;
+    }
+
+    const PRUNED_PREFIX = '/** PRUNED */';
+    const nextStyleText = `${PRUNED_PREFIX}${cssText}`
+    const edit = {
+      styleSheetId,
+      range,
+      text: nextStyleText,
+    };
+
+    await this._sendDebugCommand({
+      method: 'CSS.setStyleTexts',
+      params: {
+        edits: [edit],
+      }
+    });
+
+    // TODO: Need to call this?
+    // this.refreshStyles(nodeId);
   }
 
   async scrollIntoViewIfNeeded(nodeId: CRDP$NodeId): Promise<> {
