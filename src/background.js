@@ -10,21 +10,22 @@ import {
 } from './socket/messageTypes';
 import normalizeNodes from './normalize';
 
-import type { HighlightConfig } from 'devtools-typed/domain/overlay';
-import type { NodeId, Node } from 'devtools-typed/domain/dom';
+import type { CRDP$HighlightConfig } from 'devtools-typed/domain/overlay';
+import type { CRDP$BackendNodeId, CRDP$NodeId, CRDP$Node } from 'devtools-typed/domain/dom';
 import type {
-  CSSStyle,
-  CSSProperty,
-  RuleMatch,
+  CRDP$CSSStyle,
+  CRDP$CSSRule,
+  CRDP$CSSProperty,
+  CRDP$RuleMatch,
 } from 'devtools-typed/domain/css';
 
 type Socket = Object;
 type Target = {
   tabId: number,
 };
-type NodeMap = { [NodeId]: Node };
+type NodeMap = { [CRDP$NodeId]: CRDP$Node };
 type CSSPropertyPath = {
-  nodeId: NodeId,
+  nodeId: CRDP$NodeId,
   ruleIndex: number,
   propIndex: number,
 };
@@ -37,7 +38,7 @@ const PROTOCOL = '1.2';
 const SOCKET_PORT = 1111;
 
 // Highlighting for DOM overlays.
-const NODE_HIGHLIGHT: HighlightConfig = {
+const NODE_HIGHLIGHT: CRDP$HighlightConfig = {
   contentColor: {
     r: 255,
     g: 0,
@@ -61,12 +62,12 @@ const NODE_HIGHLIGHT: HighlightConfig = {
 class BrowserEndpoint {
   socket: ?Socket;
   target: ?Target;
-  document: ?Node;
+  document: ?CRDP$Node;
   nodes: NodeMap;
-  styles: { [NodeId]: MatchedStyles };
-  inspectedNode: ?Node;
+  styles: { [CRDP$NodeId]: MatchedStyles };
+  inspectedNode: ?CRDP$Node;
   entities: { nodes: NormalizedNodeMap };
-  ruleAnnotations: { [NodeId]: Array<?CSSRuleAnnotation> };
+  ruleAnnotations: { [CRDP$NodeId]: Array<?CSSRuleAnnotation> };
 
   _debugEventDispatch: (Target, string, Object) => Promise<*>;
 
@@ -307,7 +308,7 @@ class BrowserEndpoint {
   /**
    * Get the nodeId of the first match for the specified selector.
    */
-  async getNodeId(selector: string): Promise<NodeId> {
+  async getNodeId(selector: string): Promise<CRDP$NodeId> {
     if (!this.document) {
       this.document = await this.getDocumentRoot();
     }
@@ -335,8 +336,8 @@ class BrowserEndpoint {
     return nodeId;
   }
 
-  async getNodeById(nodeId: NodeId, offsetParent = false): Promise<Node> {
-    let result: Node;
+  async getNodeById(nodeId: CRDP$NodeId, offsetParent = false): Promise<CRDP$Node> {
+    let result: CRDP$Node;
 
     if (this.nodes[nodeId]) {
       result = this.nodes[nodeId];
@@ -352,8 +353,8 @@ class BrowserEndpoint {
     // Optionally also search for the node's offsetParent.
     if (offsetParent) {
       try {
-        let offsetParentId: NodeId = await this.getOffsetParentId(nodeId);
-        let offsetParent: Node = await this.getNodeById(offsetParentId);
+        let offsetParentId: CRDP$NodeId = await this.getOffsetParentId(nodeId);
+        let offsetParent: CRDP$Node = await this.getNodeById(offsetParentId);
         result.offsetParent = offsetParent;
       } catch (err) {
         console.error('Error retrieving offsetParent for node', nodeId);
@@ -366,19 +367,19 @@ class BrowserEndpoint {
   /**
    * Search breadth-first for a given set of nodes.
    */
-  async searchDocument(wanted: NodeId[]): Promise<NodeMap> {
+  async searchDocument(wanted: CRDP$NodeId[]): Promise<NodeMap> {
     if (!this.document) {
       this.document = await this.getDocumentRoot();
     }
 
-    const queue: Node[] = [this.document];
+    const queue: CRDP$Node[] = [this.document];
     // NodeIds we are looking for, but haven't found.
-    const missing: Set<NodeId> = new Set(wanted);
+    const missing: Set<CRDP$NodeId> = new Set(wanted);
     // Nodes we've found, associated with their nodeId.
     const found: NodeMap = {};
 
     while (queue.length > 0) {
-      const node: Node = queue.shift();
+      const node: CRDP$Node = queue.shift();
       const { nodeId } = node;
 
       if (missing.has(nodeId)) {
@@ -416,8 +417,8 @@ class BrowserEndpoint {
   /**
    * Get computed and matched styles for the given node.
    */
-  async getStyles(nodeId: NodeId): Promise<MatchedStyles> {
-    let node: Node;
+  async getStyles(nodeId: CRDP$NodeId): Promise<MatchedStyles> {
+    let node: CRDP$Node;
     try {
       node = await this.getNodeById(nodeId);
     } catch (err) {
@@ -563,7 +564,7 @@ class BrowserEndpoint {
   /**
    * Refresh stored styles, e.g. after a style edit has been made.
    */
-  async refreshStyles(nodeId?: NodeId): Promise<NodeStyleMap> {
+  async refreshStyles(nodeId?: CRDP$NodeId): Promise<NodeStyleMap> {
     console.groupCollapsed('refreshStyles');
     const timerName = `Refreshing ${Object.keys(this.styles).length} styles:`;
     console.time(timerName);
@@ -610,7 +611,7 @@ class BrowserEndpoint {
   /**
    * Get the nodeId of the given node's offsetParent.
    */
-  async getOffsetParentId(nodeId: NodeId): Promise<NodeId> {
+  async getOffsetParentId(nodeId: CRDP$NodeId): Promise<CRDP$NodeId> {
     // Set the node in question to the "currently"
     // "inspected" node, so we can use $0 in our
     // evaluation.
@@ -645,7 +646,7 @@ class BrowserEndpoint {
     ruleIndex,
     propIndex,
   }: CSSPropertyPath): Promise<{
-    [NodeId]: MatchedStyles,
+    [CRDP$NodeId]: MatchedStyles,
   }> {
     await this._toggleStyle(nodeId, ruleIndex, propIndex);
     return await this.refreshStyles();
@@ -673,15 +674,15 @@ class BrowserEndpoint {
   }
 
   async _toggleStyle(
-    nodeId: NodeId,
+    nodeId: CRDP$NodeId,
     ruleIndex: number,
     propIndex: number,
   ): Promise<> {
-    const style: CSSStyle = this.styles[nodeId].matchedCSSRules[ruleIndex].rule
+    const style: CRDP$CSSStyle = this.styles[nodeId].matchedCSSRules[ruleIndex].rule
       .style;
     const { range, styleSheetId, cssText: styleText } = style;
     const errorMsgRange = `node ${nodeId}, rule ${ruleIndex}, property ${propIndex}`;
-    const property: CSSProperty = style.cssProperties[propIndex];
+    const property: CRDP$CSSProperty = style.cssProperties[propIndex];
     if (!property) {
       throw new Error(`Couldn't get property for ${errorMsgRange}`);
     }
@@ -778,7 +779,7 @@ class BrowserEndpoint {
   }
 
   isDisabled(path: CSSPropertyPath): boolean {
-    let prop: ?CSSProperty;
+    let prop: ?CRDP$CSSProperty;
     try {
       prop = this.resolveProp(path);
     } catch (propNotFoundErr) {
@@ -792,7 +793,7 @@ class BrowserEndpoint {
    * will not have their own SourceRanges or property text.
    */
   isDeclaredProperty(path: CSSPropertyPath): boolean {
-    let prop: ?CSSProperty;
+    let prop: ?CRDP$CSSProperty;
     try {
       prop = this.resolveProp(path);
     } catch (propNotFoundErr) {
@@ -819,11 +820,11 @@ class BrowserEndpoint {
     if (!nodeStyles) {
       return false;
     }
-    const ruleMatch: RuleMatch = nodeStyles.matchedCSSRules[ruleIndex];
+    const ruleMatch: CRDP$RuleMatch = nodeStyles.matchedCSSRules[ruleIndex];
     if (!ruleMatch) {
       return false;
     }
-    const prop: CSSProperty = ruleMatch.rule.style.cssProperties[propIndex];
+    const prop: CRDP$CSSProperty = ruleMatch.rule.style.cssProperties[propIndex];
     if (!prop) {
       return false;
     }
@@ -859,7 +860,7 @@ class BrowserEndpoint {
   /**
    * Prune properties for some node.
    */
-  async prune(nodeId: NodeId, condition?: CSSPropertyPath): Promise<> {
+  async prune(nodeId: CRDP$NodeId, condition?: CSSPropertyPath): Promise<> {
     console.groupCollapsed('Pruning node', nodeId);
 
     // Get current styles and screenshots for node.
@@ -1174,7 +1175,7 @@ class BrowserEndpoint {
   /**
    * Dispatch a command to the chrome.debugger API.
    */
-  async _sendDebugCommand({ method, params }) {
+  async _sendDebugCommand({ method, params }: {method: string, params?: Object}) {
     // Highlighting will get called frequently and clog the console.
     if (method !== 'DOM.highlightNode' && method !== 'DOM.hideHighlight') {
       console.log(
