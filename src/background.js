@@ -11,7 +11,11 @@ import {
 import normalizeNodes from './normalize';
 
 import type { CRDP$HighlightConfig } from 'devtools-typed/domain/overlay';
-import type { CRDP$BackendNodeId, CRDP$NodeId, CRDP$Node } from 'devtools-typed/domain/dom';
+import type {
+  CRDP$BackendNodeId,
+  CRDP$NodeId,
+  CRDP$Node,
+} from 'devtools-typed/domain/dom';
 import type {
   CRDP$CSSStyle,
   CRDP$CSSRule,
@@ -336,7 +340,10 @@ class BrowserEndpoint {
     return nodeId;
   }
 
-  async getNodeById(nodeId: CRDP$NodeId, offsetParent = false): Promise<CRDP$Node> {
+  async getNodeById(
+    nodeId: CRDP$NodeId,
+    offsetParent = false,
+  ): Promise<CRDP$Node> {
     let result: CRDP$Node;
 
     if (this.nodes[nodeId]) {
@@ -678,8 +685,8 @@ class BrowserEndpoint {
     ruleIndex: number,
     propIndex: number,
   ): Promise<> {
-    const style: CRDP$CSSStyle = this.styles[nodeId].matchedCSSRules[ruleIndex].rule
-      .style;
+    const style: CRDP$CSSStyle = this.styles[nodeId].matchedCSSRules[ruleIndex]
+      .rule.style;
     const { range, styleSheetId, cssText: styleText } = style;
     const errorMsgRange = `node ${nodeId}, rule ${ruleIndex}, property ${propIndex}`;
     const property: CRDP$CSSProperty = style.cssProperties[propIndex];
@@ -824,7 +831,8 @@ class BrowserEndpoint {
     if (!ruleMatch) {
       return false;
     }
-    const prop: CRDP$CSSProperty = ruleMatch.rule.style.cssProperties[propIndex];
+    const prop: CRDP$CSSProperty =
+      ruleMatch.rule.style.cssProperties[propIndex];
     if (!prop) {
       return false;
     }
@@ -849,7 +857,7 @@ class BrowserEndpoint {
       // await _pruneNodeHelper(nodeId);
       await this.prune(nodeId);
     } catch (pruneError) {
-      error = {message: pruneError.message, stack: pruneError.stack};
+      error = { message: pruneError.message, stack: pruneError.stack };
     }
 
     const styles = await this.refreshStyles();
@@ -1037,20 +1045,20 @@ class BrowserEndpoint {
 
     console.log('allPruned', allPruned);
     console.log(
-     'page not self',
-     allPruned
-       .map(([selector, props]) => [
-         selector,
-         props.filter(({ element, page }) => !element && page),
-       ])
-       .filter(([, specialProps]) => specialProps.length > 0),
-   );
+      'page not self',
+      allPruned
+        .map(([selector, props]) => [
+          selector,
+          props.filter(({ element, page }) => !element && page),
+        ])
+        .filter(([, specialProps]) => specialProps.length > 0),
+    );
     console.groupEnd();
   }
 
   async markRulePruned(rule: CRDP$CSSRule) {
-    const {style, styleSheetId, origin} = rule;
-    const {cssText, range} = style;
+    const { style, styleSheetId, origin } = rule;
+    const { cssText, range } = style;
 
     if (origin !== 'regular' || !cssText) {
       throw new Error(`Cannot edit range for rule with origin ${origin}`);
@@ -1062,7 +1070,7 @@ class BrowserEndpoint {
     }
 
     const PRUNED_PREFIX = '/** PRUNED */';
-    const nextStyleText = `${PRUNED_PREFIX}${cssText}`
+    const nextStyleText = `${PRUNED_PREFIX}${cssText}`;
     const edit = {
       styleSheetId,
       range,
@@ -1073,7 +1081,7 @@ class BrowserEndpoint {
       method: 'CSS.setStyleTexts',
       params: {
         edits: [edit],
-      }
+      },
     });
 
     // TODO: Need to call this?
@@ -1213,7 +1221,13 @@ class BrowserEndpoint {
   /**
    * Dispatch a command to the chrome.debugger API.
    */
-  async _sendDebugCommand({ method, params }: { method: string, params?: Object }) {
+  async _sendDebugCommand({
+    method,
+    params,
+  }: {
+    method: string,
+    params?: Object,
+  }) {
     // Highlighting will get called frequently and clog the console.
     if (method !== 'DOM.highlightNode' && method !== 'DOM.hideHighlight') {
       console.log(
