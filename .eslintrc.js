@@ -8,6 +8,10 @@ module.exports = {
   plugins: ['flowtype'],
   rules: {
     'no-console': 'off',
+    'no-unused-vars': ['error', {
+      'varsIgnorePattern': '^_',
+      'argsIgnorePattern': '^_',
+    } ]
   },
   env: {
     node: true,
