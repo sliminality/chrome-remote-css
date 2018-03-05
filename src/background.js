@@ -317,7 +317,7 @@ class BrowserEndpoint {
       this.document = await this.getDocumentRoot();
     }
 
-    let nodeId: NodeId;
+    let nodeId: CRDP$NodeId;
     try {
       const response = await this._sendDebugCommand({
         method: 'DOM.querySelector',
