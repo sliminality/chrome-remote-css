@@ -11,8 +11,8 @@ test('build CSS from example', t => {
     '.foo': {
       margin: '10px',
       'margin-top': '20px',
-      'margin-right': '20px',
-      'margin-bottom': '20px !important',
+      'margin-right': '// 20px',
+      'margin-bottom': '// 20px !important',
       'margin-left': '20px',
     },
     '.bar': {
@@ -27,11 +27,12 @@ test('build CSS from example', t => {
           cssProperties: [
             { name: 'margin', value: '10px' },
             { name: 'margin-top', value: '20px' },
-            { name: 'margin-right', value: '20px' },
+            { name: 'margin-right', value: '// 20px', disabled: true },
             {
               name: 'margin-bottom',
-              value: '20px !important',
+              value: '// 20px !important',
               important: true,
+              disabled: true,
             },
             { name: 'margin-left', value: '20px' },
           ],
