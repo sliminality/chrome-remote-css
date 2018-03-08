@@ -22,18 +22,9 @@ import type {
   CRDP$CSSProperty,
   CRDP$RuleMatch,
 } from 'devtools-typed/domain/css';
+import type { CSSPropertyPath, NodeMap, DebugStatus, Target } from './types';
 
 type Socket = Object;
-type Target = {
-  tabId: number,
-};
-type NodeMap = { [CRDP$NodeId]: CRDP$Node };
-type CSSPropertyPath = {
-  nodeId: CRDP$NodeId,
-  ruleIndex: number,
-  propIndex: number,
-};
-type DebugStatus = 'ACTIVE' | 'INACTIVE';
 
 declare var chrome: Object;
 
