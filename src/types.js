@@ -4,7 +4,7 @@ import type { CRDP$NodeId, CRDP$Node } from 'devtools-typed/domain/dom';
 export type CSSPropertyPath = {
   nodeId: CRDP$NodeId,
   ruleIndex: number,
-  propIndex: number,
+  propertyIndex: number,
 };
 
 export type Target = {

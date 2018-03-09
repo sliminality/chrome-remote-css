@@ -642,11 +642,11 @@ class BrowserEndpoint {
   async toggleStyleAndRefresh({
     nodeId,
     ruleIndex,
-    propIndex,
+    propertyIndex,
   }: CSSPropertyPath): Promise<{
     [CRDP$NodeId]: MatchedStyles,
   }> {
-    await this._toggleStyle(nodeId, ruleIndex, propIndex);
+    await this._toggleStyle(nodeId, ruleIndex, propertyIndex);
     return await this.refreshStyles();
   }
 
@@ -656,14 +656,14 @@ class BrowserEndpoint {
 
   async toggleCSSProperty({
     nodeId,
-    ruleIdx,
-    propIdx,
+    ruleIndex,
+    propertyIndex,
   }: {
     nodeId: CRDP$NodeId,
-    ruleIdx: number,
-    propIdx: number,
+    ruleIndex: number,
+    propertyIndex: number,
   }) {
-    await this._toggleStyle(nodeId, ruleIdx, propIdx);
+    await this._toggleStyle(nodeId, ruleIndex, propertyIndex);
     const styles = await this.refreshStyles(nodeId);
     console.log('emitting styles:', Date.now());
     this._socketEmit(outgoing.SET_STYLES, {
@@ -674,13 +674,13 @@ class BrowserEndpoint {
   async _toggleStyle(
     nodeId: CRDP$NodeId,
     ruleIndex: number,
-    propIndex: number,
+    propertyIndex: number,
   ): Promise<> {
     const style: CRDP$CSSStyle = this.styles[nodeId].matchedCSSRules[ruleIndex]
       .rule.style;
     const { range, styleSheetId, cssText: styleText } = style;
-    const errorMsgRange = `node ${nodeId}, rule ${ruleIndex}, property ${propIndex}`;
-    const property: CRDP$CSSProperty = style.cssProperties[propIndex];
+    const errorMsgRange = `node ${nodeId}, rule ${ruleIndex}, property ${propertyIndex}`;
+    const property: CRDP$CSSProperty = style.cssProperties[propertyIndex];
     if (!property) {
       throw new Error(`Couldn't get property for ${errorMsgRange}`);
     }
@@ -805,15 +805,15 @@ class BrowserEndpoint {
   resolveProp(path: CSSPropertyPath): CRDP$CSSProperty {
     if (!this.propExists(path)) {
       throw new Error(
-        `resolveProp: property ${path.nodeId}:${path.ruleIndex}:${path.propIndex} does not exist`,
+        `resolveProp: property ${path.nodeId}:${path.ruleIndex}:${path.propertyIndex} does not exist`,
       );
     }
-    const { nodeId, ruleIndex, propIndex } = path;
+    const { nodeId, ruleIndex, propertyIndex } = path;
     return this.styles[nodeId].matchedCSSRules[ruleIndex].rule.style
-      .cssProperties[propIndex];
+      .cssProperties[propertyIndex];
   }
 
-  propExists({ nodeId, ruleIndex, propIndex }: CSSPropertyPath): boolean {
+  propExists({ nodeId, ruleIndex, propertyIndex }: CSSPropertyPath): boolean {
     const nodeStyles: MatchedStyles = this.styles[nodeId];
     if (!nodeStyles) {
       return false;
@@ -823,7 +823,7 @@ class BrowserEndpoint {
       return false;
     }
     const prop: CRDP$CSSProperty =
-      ruleMatch.rule.style.cssProperties[propIndex];
+      ruleMatch.rule.style.cssProperties[propertyIndex];
     if (!prop) {
       return false;
     }
@@ -907,11 +907,11 @@ class BrowserEndpoint {
       let pruneResults = [];
       let ruleAnnotation = null;
 
-      for (const [propIndex, prop] of cssProperties.entries()) {
+      for (const [propertyIndex, prop] of cssProperties.entries()) {
         const propPath: CSSPropertyPath = {
           nodeId,
           ruleIndex,
-          propIndex,
+          propertyIndex,
         };
 
         // Don't try to toggle if the property is a longhand expansion,
@@ -930,7 +930,7 @@ class BrowserEndpoint {
 
         console.log(prop.name);
 
-        await this.toggleStyleAndRefresh({ nodeId, ruleIndex, propIndex });
+        await this.toggleStyleAndRefresh({ nodeId, ruleIndex, propertyIndex });
 
         const hasDiff = { element: false, page: false };
         const screenshotElement = await this.captureScreenshot(nodeId);
@@ -985,7 +985,7 @@ class BrowserEndpoint {
         // the property is potentially relevant, so we need to reinstate it.
         if (hasDiff.element || hasDiff.page) {
           try {
-            await this._toggleStyle(nodeId, ruleIndex, propIndex);
+            await this._toggleStyle(nodeId, ruleIndex, propertyIndex);
           } catch (toggleStyleError) {
             console.error(toggleStyleError);
           }
@@ -1001,10 +1001,10 @@ class BrowserEndpoint {
           if (!ruleAnnotation) {
             ruleAnnotation = {
               type: 'BASE_STYLE',
-              shadowedProperties: [propIndex],
+              shadowedProperties: [propertyIndex],
             };
           } else {
-            ruleAnnotation.shadowedProperties.push(propIndex);
+            ruleAnnotation.shadowedProperties.push(propertyIndex);
           }
         }
 
@@ -1124,10 +1124,10 @@ class BrowserEndpoint {
   async getScreenshotForProperty({
     nodeId,
     ruleIndex,
-    propIndex,
+    propertyIndex,
   }: CSSPropertyPath): Promise<{ page: string, el: string }> {
     // TODO: Deprecate this function.
-    await this.toggleStyleAndRefresh({ nodeId, ruleIndex, propIndex });
+    await this.toggleStyleAndRefresh({ nodeId, ruleIndex, propertyIndex });
 
     // Can't do these in parallel because of viewport resize.
     const page = await this.captureScreenshot();
