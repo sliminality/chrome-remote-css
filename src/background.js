@@ -27,6 +27,7 @@ import type {
 import type {
   NodeStyleMask,
   CSSPropertyPath,
+  CSSPropertyIndices,
   NodeMap,
   DebugStatus,
   Target,
@@ -177,6 +178,10 @@ class BrowserEndpoint {
         socket.on(
           incoming.TOGGLE_CSS_PROPERTY,
           this.toggleCSSProperty.bind(this),
+        );
+        socket.on(
+          incoming.COMPUTE_DEPENDENCIES,
+          this.computeDependencies.bind(this),
         );
       });
       console.log('Opened socket', this.socket);
@@ -892,6 +897,92 @@ class BrowserEndpoint {
     });
 
     return mask;
+  }
+
+  async applyStyleMask(nodeId: CRDP$NodeId, mask: NodeStyleMask) {
+    const nodeStyles = this.styles[nodeId];
+    const { matchedCSSRules } = nodeStyles;
+    const currentMask = createStyleMask(matchedCSSRules);
+    const maskDiff = diffStyleMasks(mask)(currentMask);
+
+    let worklist = [];
+    const { enabled, disabled } = maskDiff;
+    if (enabled) {
+      worklist = worklist.concat(enabled);
+    }
+    if (disabled) {
+      worklist = worklist.concat(disabled);
+    }
+
+    for (const [ruleIndex, propertyIndex] of worklist) {
+      await this._toggleStyle(nodeId, ruleIndex, propertyIndex);
+    }
+
+    const styles = await this.refreshStyles(nodeId);
+
+    this._socketEmit(outgoing.SET_STYLES, {
+      styles,
+    });
+  }
+
+  async computeDependencies({ path }: { path: CSSPropertyPath }) {
+    console.log('compute dependencies requested');
+    let dependants;
+    let error;
+    try {
+      dependants = await this._computeDependants(path);
+    } catch (computeDependantsErr) {
+      error = computeDependantsErr.message;
+    }
+
+    // HACK: Replace the index with something less prone to breakage.
+    const { nodeId, ruleIndex, propertyIndex } = path;
+    const indices = `${nodeId},${ruleIndex},${propertyIndex}`;
+
+    this._socketEmit(outgoing.COMPUTE_DEPENDENCIES_RESULT, {
+      dependants: {
+        [indices]: dependants,
+      },
+      error,
+    });
+  }
+
+  async _computeDependants(
+    path: CSSPropertyPath,
+  ): Promise<?Array<CSSPropertyIndices>> {
+    const { nodeId, ruleIndex, propertyIndex } = path;
+    assert(this.pruned[nodeId], 'node must be pruned to compute dependencies');
+    assert(!this.isDisabled(path), 'property must be enabled to start');
+
+    // Toggle the property, and then prune.
+    await this._toggleStyle(nodeId, ruleIndex, propertyIndex);
+    try {
+      await this.prune(nodeId);
+    } catch (pruneError) {
+      console.error('computing dependencies failed');
+    }
+
+    // TODO: this is repetitive with the prune function; make it a helper.
+    await this.refreshStyles();
+    const mask = createStyleMask(this.styles[nodeId].matchedCSSRules);
+    const maskDiff = diffStyleMasks(this.pruned[nodeId])(mask);
+    const dependants =
+      maskDiff.disabled &&
+      maskDiff.disabled.filter(
+        ([depRule, depProperty]) =>
+          depRule !== ruleIndex || depProperty !== propertyIndex,
+      );
+
+    console.log('dependants', dependants);
+    console.log('maskDiff', maskDiff);
+
+    // Reinstate all dependants, including keystone.
+    for (const [depRule, depProperty] of maskDiff.disabled) {
+      // TODO: Can we do this in parallel???
+      await this._toggleStyle(nodeId, depRule, depProperty);
+    }
+
+    return dependants;
   }
 
   /**

@@ -24,6 +24,8 @@ export type NodeStyleMaskDiff = {
   disabled?: Array<CSSPropertyIndices>,
 };
 
+// HACK: CSSPropertyIndices is actually a misnomer. The keys are stringified paths
+// `${nodeId},${ruleIndex},${propertyIndex}`.
 export type NodeStyleDependencies = {
   dependants: { [keystone: CSSPropertyIndices]: Array<CSSPropertyIndices> },
   keystones: { [dependant: CSSPropertyIndices]: Array<CSSPropertyIndices> },
