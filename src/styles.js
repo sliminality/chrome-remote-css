@@ -1,13 +1,18 @@
 // @flow @format
 import zip from 'lodash/zip';
-import {assert} from './utils';
+import { assert } from './utils';
 import cssMetadata from './metadata';
 
 import type {
   CRDP$RuleMatch,
   CRDP$CSSProperty,
 } from 'devtools-typed/domain/css';
-import type { NodeStyleMask, CSSPropertyPath } from './types';
+import type {
+  NodeStyleMask,
+  CSSPropertyPath,
+  CSSPropertyIndices,
+  NodeStyleMaskDiff,
+} from './types';
 
 // PRECONDITION: Node is pruned.
 export const getEffectiveValueForProperty = (rm: Array<CRDP$RuleMatch>) => (
@@ -75,6 +80,7 @@ export const createStyleMask = (rules: Array<CRDP$RuleMatch>): NodeStyleMask =>
     ruleMatch.rule.style.cssProperties.map(property => !property.disabled),
   );
 
+// TODO: Move this to the frontend repo.
 export const isPropertyActive = (mask: NodeStyleMask) => (
   path: CSSPropertyPath,
 ): boolean => {
@@ -86,17 +92,13 @@ export const isPropertyActive = (mask: NodeStyleMask) => (
   return value;
 };
 
-type CSSPropertyIndices = [number, number];
-
-type NodeStyleMaskDiff = {
-  enabled?: Array<CSSPropertyIndices>,
-  disabled?: Array<CSSPropertyIndices>,
-};
-
 export const diffStyleMasks = (before: NodeStyleMask) => (
   after: NodeStyleMask,
 ): NodeStyleMaskDiff => {
-  assert(before.length === after.length, 'masks must have the same number of rules');
+  assert(
+    before.length === after.length,
+    'masks must have the same number of rules',
+  );
 
   const result: NodeStyleMaskDiff = {};
   const enabled: Array<CSSPropertyIndices> = [];
@@ -104,7 +106,10 @@ export const diffStyleMasks = (before: NodeStyleMask) => (
 
   // If any properties were disabled before but are now enabled.
   zip(before, after).forEach(([beforeRule, afterRule], ruleIndex) =>
-    zip(beforeRule, afterRule).forEach(([beforeProperty, afterProperty], propertyIndex) => {
+    zip(
+      beforeRule,
+      afterRule,
+    ).forEach(([beforeProperty, afterProperty], propertyIndex) => {
       // TODO: throw error?
       // if (beforeProperty == null) { ... }
 
@@ -115,7 +120,8 @@ export const diffStyleMasks = (before: NodeStyleMask) => (
         // Was disabled before, now enabled.
         enabled.push([ruleIndex, propertyIndex]);
       }
-    }));
+    }),
+  );
 
   if (enabled.length > 0) {
     result.enabled = enabled;

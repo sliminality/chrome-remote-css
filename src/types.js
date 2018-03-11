@@ -16,3 +16,15 @@ export type NodeMap = { [CRDP$NodeId]: CRDP$Node };
 export type DebugStatus = 'ACTIVE' | 'INACTIVE';
 
 export type NodeStyleMask = Array<Array<boolean>>;
+
+export type CSSPropertyIndices = [number, number];
+
+export type NodeStyleMaskDiff = {
+  enabled?: Array<CSSPropertyIndices>,
+  disabled?: Array<CSSPropertyIndices>,
+};
+
+export type NodeStyleDependencies = {
+  dependants: { [keystone: CSSPropertyIndices]: Array<CSSPropertyIndices> },
+  keystones: { [dependant: CSSPropertyIndices]: Array<CSSPropertyIndices> },
+};

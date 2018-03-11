@@ -3,7 +3,9 @@ import ChromePromise from 'chrome-promise';
 import cssbeautify from 'cssbeautify';
 import io from 'socket.io-client';
 import pdiff, { DimensionMismatchError, prefixURI } from './pdiff';
+import { createStyleMask, diffStyleMasks } from './styles';
 import { replacePropertyInStyleText } from './styleEdit';
+import { assert } from './utils';
 import {
   serverToClient as outgoing,
   clientToServer as incoming,
@@ -22,7 +24,13 @@ import type {
   CRDP$CSSProperty,
   CRDP$RuleMatch,
 } from 'devtools-typed/domain/css';
-import type { CSSPropertyPath, NodeMap, DebugStatus, Target } from './types';
+import type {
+  NodeStyleMask,
+  CSSPropertyPath,
+  NodeMap,
+  DebugStatus,
+  Target,
+} from './types';
 
 type Socket = Object;
 
@@ -60,6 +68,7 @@ class BrowserEndpoint {
   document: ?CRDP$Node;
   nodes: NodeMap;
   styles: { [CRDP$NodeId]: MatchedStyles };
+  pruned: { [CRDP$NodeId]: EffectiveStyles };
   inspectedNode: ?CRDP$Node;
   entities: { nodes: NormalizedNodeMap };
   ruleAnnotations: { [CRDP$NodeId]: Array<?CSSRuleAnnotation> };
@@ -75,6 +84,7 @@ class BrowserEndpoint {
     this.document = null;
     this.inspectedNode = null;
     this.styles = {};
+    this.pruned = {};
     this.nodes = {};
     this.ruleAnnotations = {};
 
@@ -213,6 +223,7 @@ class BrowserEndpoint {
     this.inspectedNode = null;
     this.styles = {};
     this.nodes = {};
+    this.pruned = {};
 
     const { root } = await this._sendDebugCommand({
       method: 'DOM.getDocument',
@@ -460,14 +471,16 @@ class BrowserEndpoint {
     // highest-specificity styles come first.
     matchedStyles.matchedCSSRules.reverse();
 
-    // Get any rule annotations.
+    // Get any rule annotations and pruned filters.
     const ruleAnnotations = this.ruleAnnotations[nodeId];
+    const pruned = this.pruned[nodeId];
 
     const styles = Object.assign(
       {},
       matchedStyles,
       { computedStyle, parentComputedStyle },
       ruleAnnotations ? { ruleAnnotations } : null,
+      pruned ? { pruned } : null,
     );
 
     this.styles[nodeId] = styles;
@@ -830,7 +843,7 @@ class BrowserEndpoint {
     return true;
   }
 
-  async pruneNode({ nodeId }: { nodeId: CRDP$NodeId }) {
+  async pruneNode({ nodeId }: { nodeId: CRDP$NodeId }): Promise<NodeStyleMask> {
     const _pruneNodeHelper = async (nodeId: CRDP$NodeId) => {
       await this.prune(nodeId);
       const currentNode = this.nodes[nodeId];
@@ -843,25 +856,52 @@ class BrowserEndpoint {
     };
 
     let error;
+    let allPropertiesEnabled = false;
 
     try {
       // await _pruneNodeHelper(nodeId);
-      await this.prune(nodeId);
+      allPropertiesEnabled = await this.prune(nodeId);
     } catch (pruneError) {
       error = { message: pruneError.message, stack: pruneError.stack };
+
+      // Catch the group started at the beginning of the function.
+      console.groupEnd();
     }
 
     const styles = await this.refreshStyles();
-    this._socketEmit(outgoing.PRUNE_NODE_RESULT, { error });
+    const mask = createStyleMask(this.styles[nodeId].matchedCSSRules);
+
+    // If this is the first time we are pruning, AND all properties were
+    // originally enabled, set the pruned style mask.
+    // TODO: Figure out how to handle invalidation.
+    let maskDiff;
+
+    if (this.pruned[nodeId]) {
+      maskDiff = diffStyleMasks(this.pruned[nodeId])(mask);
+    } else if (allPropertiesEnabled) {
+      this.pruned[nodeId] = mask;
+    }
+
+    this._socketEmit(
+      outgoing.PRUNE_NODE_RESULT,
+      Object.assign({}, { error, nodeId }, maskDiff ? { maskDiff } : { mask }),
+    );
+
     this._socketEmit(outgoing.SET_STYLES, {
       styles,
     });
+
+    return mask;
   }
 
   /**
    * Prune properties for some node.
+   * Returns a boolean, indicating whether or not all properties were enabled before pruning.
    */
-  async prune(nodeId: CRDP$NodeId, condition?: CSSPropertyPath): Promise<> {
+  async prune(
+    nodeId: CRDP$NodeId,
+    condition?: CSSPropertyPath,
+  ): Promise<boolean> {
     console.groupCollapsed('Pruning node', nodeId);
 
     // Get current styles and screenshots for node.
@@ -902,6 +942,10 @@ class BrowserEndpoint {
     const ruleAnnotations = [];
     const rules = matchedCSSRules.entries();
 
+    // If all properties are enabled, we'll save the pruning result as the
+    // "pruned styles" for the node.
+    let allPropertiesEnabled = true;
+
     for (const [ruleIndex, ruleMatch] of rules) {
       const { cssProperties } = ruleMatch.rule.style;
       let pruneResults = [];
@@ -920,6 +964,7 @@ class BrowserEndpoint {
           continue;
         }
         if (this.isDisabled(propPath)) {
+          allPropertiesEnabled = false;
           continue;
         }
         // Static VRP can't detect animation and interactive properties,
@@ -983,7 +1028,8 @@ class BrowserEndpoint {
 
         // If there is a nonzero difference at either the element or page level,
         // the property is potentially relevant, so we need to reinstate it.
-        if (hasDiff.element || hasDiff.page) {
+        const hasAnyDiff = hasDiff.element || hasDiff.page;
+        if (hasAnyDiff) {
           try {
             await this._toggleStyle(nodeId, ruleIndex, propertyIndex);
           } catch (toggleStyleError) {
@@ -1011,7 +1057,7 @@ class BrowserEndpoint {
         // Log the differences recorded.
         pruneResults.push(
           Object.assign({}, hasDiff, {
-            prop: prop.name,
+            property: prop.name,
           }),
         );
       }
@@ -1026,13 +1072,11 @@ class BrowserEndpoint {
       ruleAnnotations.push(ruleAnnotation);
     }
 
-    // Done pruning all rules in style.
-    // Mark the rules pruned in source.
+    // Done pruning all rules in style. Mark the rules pruned in source.
     // TODO: Figure out some way to invalidate this later?
-    // eslint-disable-next-line no-unused-vars
-    for (const rule of matchedCSSRules) {
-      await this.markRulePruned(rule);
-    }
+    // for (const rule of matchedCSSRules) {
+    //   await this.markRulePruned(rule);
+    // }
 
     console.log('allPruned', allPruned);
     console.log(
@@ -1045,6 +1089,8 @@ class BrowserEndpoint {
         .filter(([, specialProps]) => specialProps.length > 0),
     );
     console.groupEnd();
+
+    return allPropertiesEnabled;
   }
 
   async markRulePruned(rule: CRDP$CSSRule) {
