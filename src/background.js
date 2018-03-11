@@ -879,17 +879,17 @@ class BrowserEndpoint {
     // If this is the first time we are pruning, AND all properties were
     // originally enabled, set the pruned style mask.
     // TODO: Figure out how to handle invalidation.
-    let maskDiff;
+    let diff;
 
     if (this.pruned[nodeId]) {
-      maskDiff = diffStyleMasks(this.pruned[nodeId])(mask);
+      diff = diffStyleMasks(this.pruned[nodeId])(mask);
     } else if (allPropertiesEnabled) {
       this.pruned[nodeId] = mask;
     }
 
     this._socketEmit(
       outgoing.PRUNE_NODE_RESULT,
-      Object.assign({}, { error, nodeId }, maskDiff ? { maskDiff } : { mask }),
+      Object.assign({}, { error, nodeId }, diff ? { diff } : { mask }),
     );
 
     this._socketEmit(outgoing.SET_STYLES, {
