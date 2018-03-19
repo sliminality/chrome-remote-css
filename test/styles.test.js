@@ -8,9 +8,6 @@ import {
   isPropertyActive,
 } from '../src/styles';
 
-import type { CRDP$CSSProperty } from 'devtools-typed/CSS';
-import type { MockCSSRuleMatch, CSSInput } from './helpers/styleHelpers';
-
 test('create style mask', t => {
   const input = [
     {
@@ -1999,11 +1996,12 @@ test('diff style masks', t => {
 
   const beforeMask = createStyleMask(before);
   const afterMask = createStyleMask(after);
-  const diff = diffStyleMasks(beforeMask)(afterMask);
+  const nodeId = 1;
+  const diff = diffStyleMasks(nodeId, beforeMask)(afterMask);
 
   const expected = {
-    disabled: [[3, 5], [3, 8], [3, 9], [3, 10], [3, 11]],
-    enabled: [[1, 0]],
+    disabled: [[1, 3, 5], [1, 3, 8], [1, 3, 9], [1, 3, 10], [1, 3, 11]],
+    enabled: [[1, 1, 0]],
   };
 
   t.deepEqual(diff.disabled, expected.disabled);
@@ -2676,7 +2674,7 @@ test('check if property is active in style mask', t => {
   const mask = createStyleMask(input);
   t.true(isPropertyActive(mask)([3, 3]));
   t.false(isPropertyActive(mask)([3, 2]));
-})
+});
 
 test('build CSS from example', t => {
   const input = {

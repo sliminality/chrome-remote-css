@@ -20,4 +20,8 @@ function assert(condition: boolean, message: string) {
   }
 }
 
-export { showImage, assert };
+function toInt(str: string | number): number {
+  return parseInt(str, 10);
+}
+
+export { showImage, assert, toInt };

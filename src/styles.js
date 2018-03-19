@@ -1,15 +1,15 @@
 // @flow @format
 import zip from 'lodash/zip';
-import { assert } from './utils';
+import { assert, toInt } from './utils';
 import cssMetadata from './metadata';
 
+import type { CRDP$NodeId } from 'devtools-typed/domain/DOM';
 import type {
   CRDP$RuleMatch,
   CRDP$CSSProperty,
 } from 'devtools-typed/domain/css';
 import type {
   NodeStyleMask,
-  CSSPropertyPath,
   CSSPropertyIndices,
   NodeStyleMaskDiff,
 } from './types';
@@ -75,6 +75,7 @@ export const getEffectiveValueForProperty = (rm: Array<CRDP$RuleMatch>) => (
   return result;
 };
 
+// TODO: Figure out a better way to handle longhand properties.
 export const createStyleMask = (rules: Array<CRDP$RuleMatch>): NodeStyleMask =>
   rules.map(ruleMatch =>
     ruleMatch.rule.style.cssProperties.map(property => !property.disabled),
@@ -82,7 +83,7 @@ export const createStyleMask = (rules: Array<CRDP$RuleMatch>): NodeStyleMask =>
 
 // TODO: Move this to the frontend repo.
 export const isPropertyActive = (mask: NodeStyleMask) => (
-  path: CSSPropertyPath,
+  path: [number, number],
 ): boolean => {
   const [ruleIndex, propertyIndex] = path;
   const rule = mask[ruleIndex];
@@ -92,7 +93,7 @@ export const isPropertyActive = (mask: NodeStyleMask) => (
   return value;
 };
 
-export const diffStyleMasks = (before: NodeStyleMask) => (
+export const diffStyleMasks = (nodeId: CRDP$NodeId, before: NodeStyleMask) => (
   after: NodeStyleMask,
 ): NodeStyleMaskDiff => {
   assert(
@@ -115,10 +116,10 @@ export const diffStyleMasks = (before: NodeStyleMask) => (
 
       if (beforeProperty && !afterProperty) {
         // Was enabled before, now disabled.
-        disabled.push([ruleIndex, propertyIndex]);
+        disabled.push([toInt(nodeId), ruleIndex, propertyIndex]);
       } else if (!beforeProperty && afterProperty) {
         // Was disabled before, now enabled.
-        enabled.push([ruleIndex, propertyIndex]);
+        enabled.push([toInt(nodeId), ruleIndex, propertyIndex]);
       }
     }),
   );

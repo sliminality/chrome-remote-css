@@ -17,7 +17,7 @@ export type DebugStatus = 'ACTIVE' | 'INACTIVE';
 
 export type NodeStyleMask = Array<Array<boolean>>;
 
-export type CSSPropertyIndices = [number, number];
+export type CSSPropertyIndices = [number, number, number];
 
 export type NodeStyleMaskDiff = {
   enabled?: Array<CSSPropertyIndices>,

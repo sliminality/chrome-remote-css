@@ -585,7 +585,7 @@ class BrowserEndpoint {
     const timerName = `Refreshing ${Object.keys(this.styles).length} styles:`;
     console.time(timerName);
 
-    const nodesToUpdate: Array<NodeId> =
+    const nodesToUpdate: Array<CRDP$NodeId> =
       typeof nodeId === 'number'
         ? [nodeId]
         : Object.keys(this.styles).map(str => parseInt(str, 10));
@@ -804,6 +804,16 @@ class BrowserEndpoint {
     return !!prop.disabled;
   }
 
+  isParsedOk(path: CSSPropertyPath): boolean {
+    let prop: ?CRDP$CSSProperty;
+    try {
+      prop = this.resolveProp(path);
+    } catch (propNotFoundErr) {
+      return false;
+    }
+    return typeof prop.parsedOk === 'boolean' ? !!prop.parsedOk : true;
+  }
+
   /**
    * Longhand properties that are expansions of shorthand properties
    * will not have their own SourceRanges or property text.
@@ -882,8 +892,19 @@ class BrowserEndpoint {
     let diff;
 
     if (this.pruned[nodeId]) {
-      diff = diffStyleMasks(this.pruned[nodeId])(mask);
+      try {
+        diff = diffStyleMasks(nodeId, this.pruned[nodeId])(mask);
+      } catch (diffStyleMasksErr) {
+        // TODO: If we have two masks with different numbers of rules,
+        // we should probably just set the new mask as the new `pruned` state.
+        error = diffStyleMasksErr.message;
+      }
     } else if (allPropertiesEnabled) {
+      this.pruned[nodeId] = mask;
+    } else {
+      // HACK: Allows saving the pruned mask even if some number of properties
+      // are already disabled. Useful for refreshes.
+      // TODO: REMOVE THIS AFTER TESTING
       this.pruned[nodeId] = mask;
     }
 
@@ -903,7 +924,7 @@ class BrowserEndpoint {
     const nodeStyles = this.styles[nodeId];
     const { matchedCSSRules } = nodeStyles;
     const currentMask = createStyleMask(matchedCSSRules);
-    const maskDiff = diffStyleMasks(mask)(currentMask);
+    const maskDiff = diffStyleMasks(nodeId, mask)(currentMask);
 
     let worklist = [];
     const { enabled, disabled } = maskDiff;
@@ -925,64 +946,99 @@ class BrowserEndpoint {
     });
   }
 
-  async computeDependencies({ path }: { path: CSSPropertyPath }) {
-    console.log('compute dependencies requested');
-    let dependants;
-    let error;
-    try {
-      dependants = await this._computeDependants(path);
-    } catch (computeDependantsErr) {
-      error = computeDependantsErr.message;
-    }
+  async computeDependencies(path: CSSPropertyPath) {
+    const { nodeId, ruleIndex, propertyIndex } = path;
+    const { dependants, error } = await this._computeDependants(path);
 
     // HACK: Replace the index with something less prone to breakage.
-    const { nodeId, ruleIndex, propertyIndex } = path;
     const indices = `${nodeId},${ruleIndex},${propertyIndex}`;
 
-    this._socketEmit(outgoing.COMPUTE_DEPENDENCIES_RESULT, {
-      dependants: {
+    this._socketEmit(outgoing.SET_DEPENDENCIES, {
+      dependencies: {
         [indices]: dependants,
       },
       error,
+    });
+
+    this._socketEmit(outgoing.SET_STYLES, {
+      styles: await this.refreshStyles(nodeId),
     });
   }
 
   async _computeDependants(
     path: CSSPropertyPath,
-  ): Promise<?Array<CSSPropertyIndices>> {
+  ): Promise<{ dependants: ?Array<CSSPropertyIndices>, error?: string }> {
     const { nodeId, ruleIndex, propertyIndex } = path;
+    const given = [nodeId, ruleIndex, propertyIndex];
     assert(this.pruned[nodeId], 'node must be pruned to compute dependencies');
     assert(!this.isDisabled(path), 'property must be enabled to start');
 
+    // Sometimes pruning a second time can yield new changes, so we should
+    // prune again first.
+    let beforeMask = this.pruned[nodeId];
+    try {
+      await this.prune(nodeId);
+      await this.refreshStyles();
+      beforeMask = createStyleMask(this.styles[nodeId].matchedCSSRules);
+    } catch (err) {
+      console.error('Error while pre-pruning', err.message);
+    }
+
     // Toggle the property, and then prune.
-    await this._toggleStyle(nodeId, ruleIndex, propertyIndex);
+    await this._toggleStyle(...given);
     try {
       await this.prune(nodeId);
     } catch (pruneError) {
-      console.error('computing dependencies failed');
+      console.error(
+        'pruning after disabling keystone failed',
+        pruneError.message,
+      );
     }
 
     // TODO: this is repetitive with the prune function; make it a helper.
     await this.refreshStyles();
     const mask = createStyleMask(this.styles[nodeId].matchedCSSRules);
-    const maskDiff = diffStyleMasks(this.pruned[nodeId])(mask);
+    const maskDiff = diffStyleMasks(nodeId, beforeMask)(mask);
+
+    // Dependants are properties that were enabled before, but disabled now.
     const dependants =
       maskDiff.disabled &&
       maskDiff.disabled.filter(
-        ([depRule, depProperty]) =>
-          depRule !== ruleIndex || depProperty !== propertyIndex,
+        ([depNode, depRule, depProperty]) =>
+          depNode !== nodeId ||
+          depRule !== ruleIndex ||
+          depProperty !== propertyIndex,
       );
-
-    console.log('dependants', dependants);
-    console.log('maskDiff', maskDiff);
+    const errorStyles = [];
 
     // Reinstate all dependants, including keystone.
-    for (const [depRule, depProperty] of maskDiff.disabled) {
-      // TODO: Can we do this in parallel???
-      await this._toggleStyle(nodeId, depRule, depProperty);
+    if (maskDiff.disabled) {
+      for (const indices of maskDiff.disabled) {
+        // TODO: Can we do this in parallel???
+        try {
+          await this._toggleStyle(...indices);
+        } catch (toggleStyleError) {
+          errorStyles.push(indices);
+        }
+      }
+      try {
+        await this._toggleStyle(...given);
+      } catch (toggleStyleError) {
+        errorStyles.push(given);
+      }
     }
 
-    return dependants;
+    const result: { dependants: ?Array<CSSPropertyIndices>, error?: string } = {
+      dependants,
+    };
+
+    if (errorStyles.length > 0) {
+      result.error = `Could not toggle properties ${JSON.stringify(
+        errorStyles,
+      )}`;
+    }
+
+    return result;
   }
 
   /**
@@ -1051,7 +1107,7 @@ class BrowserEndpoint {
 
         // Don't try to toggle if the property is a longhand expansion,
         // or if it's already disabled.
-        if (!this.isDeclaredProperty(propPath)) {
+        if (!this.isDeclaredProperty(propPath) || !this.isParsedOk(propPath)) {
           continue;
         }
         if (this.isDisabled(propPath)) {
@@ -1168,6 +1224,9 @@ class BrowserEndpoint {
     // for (const rule of matchedCSSRules) {
     //   await this.markRulePruned(rule);
     // }
+
+    // Update rule annotations for node.
+    // this.ruleAnnotations[nodeId] = ruleAnnotations;
 
     console.log('allPruned', allPruned);
     console.log(
