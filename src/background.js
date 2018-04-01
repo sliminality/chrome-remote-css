@@ -266,13 +266,15 @@ class BrowserEndpoint {
    * Highlight a node on the inspected page.
    * If argument is null, disable highlight.
    */
-  async highlightNode({
-    nodeId,
-    selectorList,
-  }: {
-    nodeId: CRDP$NodeId,
-    selectorList?: string,
-  }) {
+  async highlightNode(
+    {
+      nodeId,
+      selectorList,
+    }: {
+      nodeId: CRDP$NodeId,
+      selectorList?: string,
+    },
+  ) {
     let highlightConfig = NODE_HIGHLIGHT;
 
     if (selectorList) {
@@ -469,8 +471,7 @@ class BrowserEndpoint {
           (memo, current) =>
             Object.assign(memo, { [current.name]: current.value }),
           {},
-        ),
-      );
+        ));
 
     // Reverse the order of the matched styles, so that the
     // highest-specificity styles come first.
@@ -531,11 +532,13 @@ class BrowserEndpoint {
     return data;
   };
 
-  nodeInspected = async ({
-    backendNodeId,
-  }: {
-    backendNodeId: CRDP$BackendNodeId,
-  }) => {
+  nodeInspected = async (
+    {
+      backendNodeId,
+    }: {
+      backendNodeId: CRDP$BackendNodeId,
+    },
+  ) => {
     this.disableInspectMode();
 
     // Get the nodeId corresponding to the backendId.
@@ -556,11 +559,13 @@ class BrowserEndpoint {
     console.log(`Inspecting node ${inspectedNodeId}`, this.inspectedNode);
   };
 
-  async pushNodesByBackendIdsToFrontend({
-    backendNodeIds,
-  }: {
-    backendNodeIds: Array<CRDP$BackendNodeId>,
-  }): Promise<Array<CRDP$NodeId>> {
+  async pushNodesByBackendIdsToFrontend(
+    {
+      backendNodeIds,
+    }: {
+      backendNodeIds: Array<CRDP$BackendNodeId>,
+    },
+  ): Promise<Array<CRDP$NodeId>> {
     const { nodeIds } = await this._sendDebugCommand({
       method: 'DOM.pushNodesByBackendIdsToFrontend',
       params: {
@@ -585,10 +590,9 @@ class BrowserEndpoint {
     const timerName = `Refreshing ${Object.keys(this.styles).length} styles:`;
     console.time(timerName);
 
-    const nodesToUpdate: Array<CRDP$NodeId> =
-      typeof nodeId === 'number'
-        ? [nodeId]
-        : Object.keys(this.styles).map(str => parseInt(str, 10));
+    const nodesToUpdate: Array<CRDP$NodeId> = typeof nodeId === 'number'
+      ? [nodeId]
+      : Object.keys(this.styles).map(str => parseInt(str, 10));
 
     // const storedNodeIds: NodeId[] = Object.keys(this.styles).map(nodeId =>
     //   parseInt(nodeId),
@@ -657,11 +661,13 @@ class BrowserEndpoint {
    * Exposed handler, which toggles the style, updates the styles cache,
    * and responds with the updated styles.
    */
-  async toggleStyleAndRefresh({
-    nodeId,
-    ruleIndex,
-    propertyIndex,
-  }: CSSPropertyPath): Promise<{
+  async toggleStyleAndRefresh(
+    {
+      nodeId,
+      ruleIndex,
+      propertyIndex,
+    }: CSSPropertyPath,
+  ): Promise<{
     [CRDP$NodeId]: MatchedStyles,
   }> {
     await this._toggleStyle(nodeId, ruleIndex, propertyIndex);
@@ -672,15 +678,17 @@ class BrowserEndpoint {
     this._socketEmit(outgoing.ERROR, { error });
   }
 
-  async toggleCSSProperty({
-    nodeId,
-    ruleIndex,
-    propertyIndex,
-  }: {
-    nodeId: CRDP$NodeId,
-    ruleIndex: number,
-    propertyIndex: number,
-  }) {
+  async toggleCSSProperty(
+    {
+      nodeId,
+      ruleIndex,
+      propertyIndex,
+    }: {
+      nodeId: CRDP$NodeId,
+      ruleIndex: number,
+      propertyIndex: number,
+    },
+  ) {
     await this._toggleStyle(nodeId, ruleIndex, propertyIndex);
     const styles = await this.refreshStyles(nodeId);
     console.log('emitting styles:', Date.now());
@@ -694,8 +702,9 @@ class BrowserEndpoint {
     ruleIndex: number,
     propertyIndex: number,
   ): Promise<> {
-    const style: CRDP$CSSStyle = this.styles[nodeId].matchedCSSRules[ruleIndex]
-      .rule.style;
+    const style: CRDP$CSSStyle = this.styles[nodeId].matchedCSSRules[
+      ruleIndex
+    ].rule.style;
     const { range, styleSheetId, cssText: styleText } = style;
     const errorMsgRange = `node ${nodeId}, rule ${ruleIndex}, property ${propertyIndex}`;
     const property: CRDP$CSSProperty = style.cssProperties[propertyIndex];
@@ -837,8 +846,9 @@ class BrowserEndpoint {
       );
     }
     const { nodeId, ruleIndex, propertyIndex } = path;
-    return this.styles[nodeId].matchedCSSRules[ruleIndex].rule.style
-      .cssProperties[propertyIndex];
+    return this.styles[nodeId].matchedCSSRules[
+      ruleIndex
+    ].rule.style.cssProperties[propertyIndex];
   }
 
   propExists({ nodeId, ruleIndex, propertyIndex }: CSSPropertyPath): boolean {
@@ -850,8 +860,9 @@ class BrowserEndpoint {
     if (!ruleMatch) {
       return false;
     }
-    const prop: CRDP$CSSProperty =
-      ruleMatch.rule.style.cssProperties[propertyIndex];
+    const prop: CRDP$CSSProperty = ruleMatch.rule.style.cssProperties[
+      propertyIndex
+    ];
     if (!prop) {
       return false;
     }
@@ -1001,8 +1012,7 @@ class BrowserEndpoint {
     const maskDiff = diffStyleMasks(nodeId, beforeMask)(mask);
 
     // Dependants are properties that were enabled before, but disabled now.
-    const dependants =
-      maskDiff.disabled &&
+    const dependants = maskDiff.disabled &&
       maskDiff.disabled.filter(
         ([depNode, depRule, depProperty]) =>
           depNode !== nodeId ||
@@ -1033,9 +1043,7 @@ class BrowserEndpoint {
     };
 
     if (errorStyles.length > 0) {
-      result.error = `Could not toggle properties ${JSON.stringify(
-        errorStyles,
-      )}`;
+      result.error = `Could not toggle properties ${JSON.stringify(errorStyles)}`;
     }
 
     return result;
@@ -1226,7 +1234,7 @@ class BrowserEndpoint {
     // }
 
     // Update rule annotations for node.
-    // this.ruleAnnotations[nodeId] = ruleAnnotations;
+    this.ruleAnnotations[nodeId] = ruleAnnotations;
 
     console.log('allPruned', allPruned);
     console.log(
@@ -1317,11 +1325,13 @@ class BrowserEndpoint {
     }
   }
 
-  async getScreenshotForProperty({
-    nodeId,
-    ruleIndex,
-    propertyIndex,
-  }: CSSPropertyPath): Promise<{ page: string, el: string }> {
+  async getScreenshotForProperty(
+    {
+      nodeId,
+      ruleIndex,
+      propertyIndex,
+    }: CSSPropertyPath,
+  ): Promise<{ page: string, el: string }> {
     // TODO: Deprecate this function.
     await this.toggleStyleAndRefresh({ nodeId, ruleIndex, propertyIndex });
 
@@ -1408,13 +1418,15 @@ class BrowserEndpoint {
   /**
    * Dispatch a command to the chrome.debugger API.
    */
-  async _sendDebugCommand({
-    method,
-    params,
-  }: {
-    method: string,
-    params?: Object,
-  }) {
+  async _sendDebugCommand(
+    {
+      method,
+      params,
+    }: {
+      method: string,
+      params?: Object,
+    },
+  ) {
     // Highlighting will get called frequently and clog the console.
     if (method !== 'DOM.highlightNode' && method !== 'DOM.hideHighlight') {
       console.log(
@@ -1470,8 +1482,8 @@ async function main() {
   }
 
   const { id: tabId } = await BrowserEndpoint.getActiveTab();
-  const hasConnection =
-    window.endpoint.target && window.endpoint.target.tabId === tabId;
+  const hasConnection = window.endpoint.target &&
+    window.endpoint.target.tabId === tabId;
 
   if (!hasConnection) {
     // Need to init connections.
