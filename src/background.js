@@ -43,9 +43,12 @@ const SOCKET_PORT = 1111;
 
 // HACK
 window.DEBUG = {
-  writeDiff: true,
-  threshold: 0,
-  maxDiff: 0,
+  pdiff: {
+    writeDiff: true,
+    threshold: 0,
+    maxDiff: 0,
+  },
+  annotations: true,
 };
 
 // Highlighting for DOM overlays.
@@ -1104,7 +1107,7 @@ class BrowserEndpoint {
     const pdiffOptions = Object.assign(
       {},
       { threshold: 0, maxDiff: 0, writeDiff: false },
-      window.DEBUG,
+      window.DEBUG.pdiff,
     );
     const [pdiffAll, pdiffElement] = await Promise.all([
       pdiff(basePage, pdiffOptions),
@@ -1223,7 +1226,9 @@ class BrowserEndpoint {
         // TODO: Make this a separate function, annotateRule.
         // HACK: There are false positives with `margin-top`.
         // TODO: Investigate this and fix.
-        if (!hasDiff.element && hasDiff.page && prop.name !== 'margin-top') {
+        if (
+          !hasDiff.element && hasDiff.page && prop.name.index('margin') === -1
+        ) {
           if (!ruleAnnotation) {
             ruleAnnotation = {
               type: 'BASE_STYLE',
@@ -1259,7 +1264,9 @@ class BrowserEndpoint {
     // }
 
     // Update rule annotations for node.
-    this.ruleAnnotations[nodeId] = ruleAnnotations;
+    if (window.DEBUG.annotations) {
+      this.ruleAnnotations[nodeId] = ruleAnnotations;
+    }
 
     console.log('allPruned', allPruned);
     console.log(
