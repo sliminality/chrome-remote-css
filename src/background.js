@@ -41,6 +41,13 @@ const cp = new ChromePromise();
 const PROTOCOL = '1.2';
 const SOCKET_PORT = 1111;
 
+// HACK
+window.DEBUG = {
+  writeDiff: true,
+  threshold: 0,
+  maxDiff: 0,
+};
+
 // Highlighting for DOM overlays.
 const NODE_HIGHLIGHT: CRDP$HighlightConfig = {
   contentColor: {
@@ -419,6 +426,12 @@ class BrowserEndpoint {
      */
     const missingFormat: string = JSON.stringify(missing);
     throw new Error(`couldn't find nodes for ${missingFormat}`);
+  }
+
+  async inspectNodeBySelector(selector: string) {
+    const nodeId = await this.getNodeId(selector);
+    const { backendNodeId } = this.nodes[nodeId];
+    this.nodeInspected({ backendNodeId });
   }
 
   async requestStyleForNode({ nodeId }: { nodeId: CRDP$NodeId }) {
@@ -1088,7 +1101,11 @@ class BrowserEndpoint {
       element: baseElement,
     });
 
-    const pdiffOptions = { threshold: 0, maxDiff: 0 };
+    const pdiffOptions = Object.assign(
+      {},
+      { threshold: 0, maxDiff: 0, writeDiff: false },
+      window.DEBUG,
+    );
     const [pdiffAll, pdiffElement] = await Promise.all([
       pdiff(basePage, pdiffOptions),
       pdiff(baseElement, pdiffOptions),
@@ -1134,19 +1151,21 @@ class BrowserEndpoint {
 
         const hasDiff = { element: false, page: false };
         const screenshotElement = await this.captureScreenshot(nodeId);
-        window.screenshots.push({
-          prop: prop.name,
-          element: screenshotElement,
-        });
 
         // First compute pdiff wrt the element itself. If removing the property
         // causes regression wrt the element, it trivially causes regression wrt
         // the page.
         try {
-          const { numPixelsDifferent } = await pdiffElement(screenshotElement);
+          const { numPixelsDifferent, diffImage } = await pdiffElement(
+            screenshotElement,
+          );
           if (numPixelsDifferent > 0) {
             hasDiff.element = true;
             hasDiff.page = true;
+            window.screenshots.push({
+              prop: prop.name,
+              element: diffImage || screenshotElement,
+            });
           }
         } catch (pdiffErr) {
           if (pdiffErr instanceof DimensionMismatchError) {
@@ -1168,9 +1187,15 @@ class BrowserEndpoint {
             window.screenshots.length - 1
           ].page = screenshotPage;
           try {
-            const { numPixelsDifferent } = await pdiffAll(screenshotPage);
+            const { numPixelsDifferent, diffImage } = await pdiffAll(
+              screenshotPage,
+            );
             if (numPixelsDifferent > 0) {
               hasDiff.page = true;
+              window.screenshots.push({
+                prop: prop.name,
+                page: diffImage || screenshotPage,
+              });
             }
           } catch (pdiffErr) {
             if (pdiffErr instanceof DimensionMismatchError) {
