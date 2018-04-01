@@ -1121,6 +1121,8 @@ class BrowserEndpoint {
     // "pruned styles" for the node.
     let allPropertiesEnabled = true;
 
+    console.log('rules', rules);
+
     for (const [ruleIndex, ruleMatch] of rules) {
       const { cssProperties } = ruleMatch.rule.style;
       let pruneResults = [];
@@ -1227,7 +1229,7 @@ class BrowserEndpoint {
         // HACK: There are false positives with `margin-top`.
         // TODO: Investigate this and fix.
         if (
-          !hasDiff.element && hasDiff.page && prop.name.index('margin') === -1
+          !hasDiff.element && hasDiff.page && prop.name.indexOf('margin') === -1
         ) {
           if (!ruleAnnotation) {
             ruleAnnotation = {
