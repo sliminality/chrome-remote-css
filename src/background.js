@@ -49,6 +49,7 @@ window.DEBUG = {
     maxDiff: 0,
   },
   annotations: true,
+  shadowBlacklist: ['margin', 'box-sizing'],
 };
 
 // Highlighting for DOM overlays.
@@ -1121,8 +1122,6 @@ class BrowserEndpoint {
     // "pruned styles" for the node.
     let allPropertiesEnabled = true;
 
-    console.log('rules', rules);
-
     for (const [ruleIndex, ruleMatch] of rules) {
       const { cssProperties } = ruleMatch.rule.style;
       let pruneResults = [];
@@ -1226,11 +1225,10 @@ class BrowserEndpoint {
         // mark the current rule as having a base style, and note
         // the property index.
         // TODO: Make this a separate function, annotateRule.
-        // HACK: There are false positives with `margin-top`.
-        // TODO: Investigate this and fix.
-        if (
-          !hasDiff.element && hasDiff.page && prop.name.indexOf('margin') === -1
-        ) {
+        const isBlacklisted = window.DEBUG.shadowBlacklist.some(
+          blacklistedProperty => prop.name.indexOf(blacklistedProperty) !== -1,
+        );
+        if (!hasDiff.element && hasDiff.page && !isBlacklisted) {
           if (!ruleAnnotation) {
             ruleAnnotation = {
               type: 'BASE_STYLE',
