@@ -16,7 +16,7 @@
     "babel-preset-env": "^1.6.0",
     "babel-preset-flow": "^6.23.0",
     "browser-env": "^3.2.0",
-    "canvas-prebuilt": "^1.6.5-prerelease.1",
+    "canvas": "^2.6.1",
     "devtools-typed": "https://github.com/sarahlim/devtools-typed",
     "eslint": "^4.8.0",
     "eslint-plugin-flowtype": "^2.37.0",
